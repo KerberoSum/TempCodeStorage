@@ -1032,8 +1032,8 @@ function Open-RoutineGenerator {
                         <TextBlock Text="End Date (dd-MM-yyyy):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                         <TextBox Name="RGEnd" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
 
-                        <TextBlock Name="RGRuleHint" Text="Day of Month (1-31):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
-                        <TextBox Name="RGRuleVal" Text="15" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12"/>
+                        <TextBlock Name="RGRuleHint" Text="Weekdays (e.g. 1, 3, 5 for Mon, Wed, Fri | 1=Mon...7=Sun):" Foreground="#A6ADC8" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,2"/>
+                        <TextBox Name="RGRuleVal" Text="1, 3, 5" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12"/>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>
@@ -1106,13 +1106,13 @@ function Open-RoutineGenerator {
         } elseif ($rgCombo.SelectedIndex -eq 1) {
             $rgMultiPan.Visibility = [System.Windows.Visibility]::Collapsed
             $rgRoutPan.Visibility  = [System.Windows.Visibility]::Visible
-            $rgRuleHint.Text = "Weekday (1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun):"
-            $rgRuleVal.Text = "1"
+            $rgRuleHint.Text = "Weekdays (e.g. 1, 3, 5 for Mon, Wed, Fri | 1=Mon...7=Sun):"
+            $rgRuleVal.Text = "1, 3, 5"
         } else {
             $rgMultiPan.Visibility = [System.Windows.Visibility]::Collapsed
             $rgRoutPan.Visibility  = [System.Windows.Visibility]::Visible
-            $rgRuleHint.Text = "Day of Month (1 to 31):"
-            $rgRuleVal.Text = "15"
+            $rgRuleHint.Text = "Days of Month (e.g. 1, 15, 30 | separated by commas):"
+            $rgRuleVal.Text = "1, 15"
         }
     })
 
@@ -1132,17 +1132,19 @@ function Open-RoutineGenerator {
                 [DateTime]::TryParseExact($rgStart.Text, "dd-MM-yyyy", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dtStart) | Out-Null
                 [DateTime]::TryParseExact($rgEnd.Text, "dd-MM-yyyy", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dtEnd) | Out-Null
 
-                $curr = $dtStart
-                $ruleNum = 1
-                [int]::TryParse($rgRuleVal.Text, [ref]$ruleNum) | Out-Null
+                # Parse multiple numbers (comma/space separated)
+                $ruleNums = @($rgRuleVal.Text -split '[,;\s]+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
 
+                $curr = $dtStart
                 while ($curr -le $dtEnd) {
                     if ($rgCombo.SelectedIndex -eq 1) {
+                        # Weekly multi-day check
                         $dayOfWeek = [int]$curr.DayOfWeek
                         if ($dayOfWeek -eq 0) { $dayOfWeek = 7 }
-                        if ($dayOfWeek -eq $ruleNum) { $targetDates.Add($curr) }
+                        if ($ruleNums -contains $dayOfWeek) { $targetDates.Add($curr) }
                     } else {
-                        if ($curr.Day -eq $ruleNum) { $targetDates.Add($curr) }
+                        # Monthly multi-day check
+                        if ($ruleNums -contains $curr.Day) { $targetDates.Add($curr) }
                     }
                     $curr = $curr.AddDays(1)
                 }
