@@ -209,6 +209,16 @@ $xaml = @'
                     </Button.Template>
                 </Button>
 
+                <Button Name="FilterBtn" Content="🔍 Filter" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,0" Cursor="Hand" DockPanel.Dock="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <Button Name="ViewToggleBtn" Content="📅 Calendar View" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,0" Cursor="Hand" DockPanel.Dock="Left">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -236,7 +246,7 @@ $xaml = @'
                     <StackPanel Name="TaskContainer"/>
                 </ScrollViewer>
 
-                <!-- High Performance Custom Month View Grid -->
+                <!-- Custom Month View Grid -->
                 <Border Name="CalendarViewContainer" Background="#181825" CornerRadius="12" Padding="10" Visibility="Collapsed">
                     <Grid Name="CalGridMaster">
                         <Grid.RowDefinitions>
@@ -252,9 +262,29 @@ $xaml = @'
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Button Name="CalPrevBtn" Content="◄" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="8,4" Cursor="Hand"/>
-                            <TextBlock Name="CalMonthTitle" Grid.Column="1" Text="August 2026" Foreground="#CDD6F4" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            <Button Name="CalNextBtn" Grid.Column="2" Content="►" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="8,4" Cursor="Hand"/>
+
+                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                <Button Name="CalPrevYearBtn" Content="◄◄" ToolTip="Previous Year" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Margin="0,0,2,0" Cursor="Hand"/>
+                                <Button Name="CalPrevBtn" Content="◄" ToolTip="Previous Month" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Cursor="Hand"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
+                                <TextBlock Name="CalMonthTitle" Text="August 2026" Foreground="#CDD6F4" FontSize="13" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <Button Name="CalTodayBtn" Content="Today" Foreground="#11111B" Background="#89B4FA" BorderThickness="0" FontSize="10" FontWeight="Bold" Padding="6,2" Cursor="Hand" VerticalAlignment="Center">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                <Button Name="CalNextBtn" Content="►" ToolTip="Next Month" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Margin="0,0,2,0" Cursor="Hand"/>
+                                <Button Name="CalNextYearBtn" Content="►►" ToolTip="Next Year" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Cursor="Hand"/>
+                            </StackPanel>
                         </Grid>
 
                         <!-- Weekday Header -->
@@ -328,12 +358,16 @@ $timePlusBtn     = $window.FindName('TimePlusBtn')
 $addBtn          = $window.FindName('AddBtn')
 $batchGenBtn     = $window.FindName('BatchGenBtn')
 $sortBtn         = $window.FindName('SortBtn')
+$filterBtn       = $window.FindName('FilterBtn')
 $viewToggleBtn   = $window.FindName('ViewToggleBtn')
 $manageTagsBtn   = $window.FindName('ManageTagsBtn')
 $feedScrollViewer = $window.FindName('FeedScrollViewer')
 $calendarViewContainer = $window.FindName('CalendarViewContainer')
+$calPrevYearBtn  = $window.FindName('CalPrevYearBtn')
 $calPrevBtn      = $window.FindName('CalPrevBtn')
 $calNextBtn      = $window.FindName('CalNextBtn')
+$calNextYearBtn  = $window.FindName('CalNextYearBtn')
+$calTodayBtn     = $window.FindName('CalTodayBtn')
 $calMonthTitle   = $window.FindName('CalMonthTitle')
 $calDaysGrid     = $window.FindName('CalDaysGrid')
 $taskContainer   = $window.FindName('TaskContainer')
@@ -344,6 +378,7 @@ $footerText      = $window.FindName('FooterText')
 $global:tasks = [System.Collections.Generic.List[PSObject]]::new()
 $global:tags  = [System.Collections.Generic.List[PSObject]]::new()
 $global:selectedTagIds = [System.Collections.Generic.List[string]]::new()
+$global:filterTagIds   = [System.Collections.Generic.List[string]]::new()
 $global:isDarkMode = $true
 $global:timeStepMode = "1h"
 $global:isCalendarView = $false
@@ -373,6 +408,37 @@ function Get-Palette {
     }
 }
 
+# Task Filtering Helper
+function Get-FilteredTasks {
+    $active = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+    if ($global:filterTagIds.Count -eq 0) {
+        return $active
+    }
+    return $active | Where-Object {
+        if (-not $_.Tags) { return $false }
+        $itemTagIds = $_.Tags.Split(';')
+        $match = $false
+        foreach ($ft in $global:filterTagIds) {
+            if ($itemTagIds -contains $ft) { $match = $true; break }
+        }
+        $match
+    }
+}
+
+function Update-FilterBtnStatus {
+    $p = Get-Palette
+    $bc = [System.Windows.Media.BrushConverter]::new()
+    if ($global:filterTagIds.Count -gt 0) {
+        $filterBtn.Content = "🔍 Filter (" + $global:filterTagIds.Count + ")"
+        $filterBtn.Background = $bc.ConvertFromString("#89B4FA")
+        $filterBtn.Foreground = $bc.ConvertFromString("#11111B")
+    } else {
+        $filterBtn.Content = "🔍 Filter"
+        $filterBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+        $filterBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    }
+}
+
 # High-Performance Custom Calendar Month Grid Engine
 function Render-CustomCalendar {
     if (-not $global:isCalendarView) { return }
@@ -390,7 +456,7 @@ function Render-CustomCalendar {
     $startDow = [int]$firstDay.DayOfWeek
     $daysInMonth = [DateTime]::DaysInMonth($year, $month)
 
-    $activeTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+    $filteredTasks = Get-FilteredTasks
 
     # Leading Empty Space Cells
     for ($i = 0; $i -lt $startDow; $i++) {
@@ -404,8 +470,8 @@ function Render-CustomCalendar {
         $currDate = [DateTime]::new($year, $month, $day)
         $dStr = $currDate.ToString("dd-MM-yyyy")
 
-        $dayTasks = $activeTasks | Where-Object { $_.EventDate -eq $dStr }
-        $taskCount = $dayTasks.Count
+        $dayTasks = $filteredTasks | Where-Object { $_.EventDate -eq $dStr }
+        $taskCount = @($dayTasks).Count
 
         $btn = New-Object System.Windows.Controls.Button
         $btn.Margin = New-Object System.Windows.Thickness(2)
@@ -414,7 +480,7 @@ function Render-CustomCalendar {
         $btnTemplate = @"
 <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
     <Border Name="bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="2">
-        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" FontWeight="{TemplateBinding FontWeight}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Border>
 </ControlTemplate>
 "@
@@ -453,6 +519,12 @@ function Render-CustomCalendar {
     }
 }
 
+# Fast Navigation Button Actions
+$calPrevYearBtn.Add_Click({
+    $global:calDisplayDate = $global:calDisplayDate.AddYears(-1)
+    Render-CustomCalendar
+})
+
 $calPrevBtn.Add_Click({
     $global:calDisplayDate = $global:calDisplayDate.AddMonths(-1)
     Render-CustomCalendar
@@ -460,6 +532,16 @@ $calPrevBtn.Add_Click({
 
 $calNextBtn.Add_Click({
     $global:calDisplayDate = $global:calDisplayDate.AddMonths(1)
+    Render-CustomCalendar
+})
+
+$calNextYearBtn.Add_Click({
+    $global:calDisplayDate = $global:calDisplayDate.AddYears(1)
+    Render-CustomCalendar
+})
+
+$calTodayBtn.Add_Click({
+    $global:calDisplayDate = Get-Date
     Render-CustomCalendar
 })
 
@@ -555,6 +637,7 @@ function Apply-Theme {
 
     Update-PinStatus
     Update-StartupStatus
+    Update-FilterBtnStatus
     Render-Cards
     Render-CustomCalendar
 }
@@ -626,6 +709,93 @@ function Reset-Inputs {
     $global:selectedTagIds.Clear()
     $selectTagsBtn.Content = "🏷️ Select Tags (0)"
 }
+
+# Tag Filter Dialog
+function Open-FilterDialog {
+    $fltXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Filter Entries" Height="360" Width="340" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <TextBlock Grid.Row="0" Text="🔍 Filter Entries by Tag" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel Name="FLTStack"/>
+            </ScrollViewer>
+
+            <Grid Grid.Row="2" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Name="FLTClearBtn" Grid.Column="0" Content="Show All (Clear)" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,0,4,0" Cursor="Hand"/>
+                <Button Name="FLTApplyBtn" Grid.Column="1" Content="Apply Filter" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Margin="4,0,0,0" Cursor="Hand"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $fltWin = [System.Windows.Markup.XamlReader]::Parse($fltXaml)
+    $fltStack    = $fltWin.FindName('FLTStack')
+    $fltClearBtn = $fltWin.FindName('FLTClearBtn')
+    $fltApplyBtn = $fltWin.FindName('FLTApplyBtn')
+
+    $localFilterIds = [System.Collections.Generic.List[string]]::new()
+    foreach ($id in $global:filterTagIds) { $localFilterIds.Add($id) }
+
+    $fltStack.Children.Clear()
+    $bc = [System.Windows.Media.BrushConverter]::new()
+
+    foreach ($t in $global:tags) {
+        $cb = New-Object System.Windows.Controls.CheckBox
+        $cb.Content = $t.Name
+        $cb.Foreground = $bc.ConvertFromString($t.ColorHex)
+        $cb.FontSize = 13
+        $cb.Margin = New-Object System.Windows.Thickness(0,0,0,6)
+        $cb.Tag = $t.Id
+
+        if ($localFilterIds.Contains($t.Id)) { $cb.IsChecked = $true }
+
+        $cb.Add_Click({
+            if ($this.IsChecked) {
+                if (-not $localFilterIds.Contains($this.Tag)) { $localFilterIds.Add($this.Tag) }
+            } else {
+                $localFilterIds.Remove($this.Tag) | Out-Null
+            }
+        })
+
+        $fltStack.Children.Add($cb) | Out-Null
+    }
+
+    $fltClearBtn.Add_Click({
+        $global:filterTagIds.Clear()
+        Update-FilterBtnStatus
+        Render-Cards
+        Render-CustomCalendar
+        $fltWin.Close()
+    })
+
+    $fltApplyBtn.Add_Click({
+        $global:filterTagIds.Clear()
+        foreach ($id in $localFilterIds) { $global:filterTagIds.Add($id) }
+        Update-FilterBtnStatus
+        Render-Cards
+        Render-CustomCalendar
+        $fltWin.Close()
+    })
+
+    $fltWin.ShowDialog() | Out-Null
+}
+
+$filterBtn.Add_Click({ Open-FilterDialog })
 
 # Refresh Input Form Tag Selector Popup
 function Refresh-InputTagSelector {
@@ -844,7 +1014,6 @@ function Open-RoutineGenerator {
 
                     <TextBlock Text="Generation Mode:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                     
-                    <!-- Solid High-Contrast ComboBox -->
                     <ComboBox Name="RGModeCombo" Background="#FFFFFF" Foreground="#11111B" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8" SelectedIndex="0">
                         <ComboBoxItem Content="Multi-Select Dates Calendar" Background="#FFFFFF" Foreground="#11111B"/>
                         <ComboBoxItem Content="Weekly Routine (e.g. Every Mon/Wed)" Background="#FFFFFF" Foreground="#11111B"/>
@@ -1012,12 +1181,12 @@ function Open-RoutineGenerator {
 
 $batchGenBtn.Add_Click({ Open-RoutineGenerator })
 
-# Day Overview Window
+# Day Overview Window (With Full Card Action Capabilities)
 function Open-DayOverview ($dateStr) {
     $doXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Day Overview" Height="480" Width="380" WindowStyle="None" 
+        Title="Day Overview" Height="500" Width="400" WindowStyle="None" 
         AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
     <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
         <Grid Margin="16">
@@ -1048,9 +1217,10 @@ function Open-DayOverview ($dateStr) {
         $p = Get-Palette
         $bc = [System.Windows.Media.BrushConverter]::new()
         
-        $dayTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" -and $_.EventDate -eq $dateStr }
+        $filteredTasks = Get-FilteredTasks
+        $dayTasks = $filteredTasks | Where-Object { $_.EventDate -eq $dateStr }
 
-        if ($dayTasks.Count -eq 0) {
+        if (@($dayTasks).Count -eq 0) {
             $emptyText = New-Object System.Windows.Controls.TextBlock
             $emptyText.Text = "No events scheduled for this date."
             $emptyText.Foreground = $bc.ConvertFromString($p.TextMuted)
@@ -1060,20 +1230,93 @@ function Open-DayOverview ($dateStr) {
             $doStack.Children.Add($emptyText) | Out-Null
         } else {
             foreach ($item in $dayTasks) {
+                # Render Full Action Card
                 $card = New-Object System.Windows.Controls.Border
                 $card.CornerRadius = New-Object System.Windows.CornerRadius(10)
                 $card.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
                 $card.Padding = New-Object System.Windows.Thickness(10)
                 $card.Background = $bc.ConvertFromString($p.CardBg)
 
+                $grid = New-Object System.Windows.Controls.Grid
+                $colContent = New-Object System.Windows.Controls.ColumnDefinition
+                $colContent.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+                $colBtns = New-Object System.Windows.Controls.ColumnDefinition
+                $colBtns.Width = [System.Windows.GridLength]::Auto
+                $grid.ColumnDefinitions.Add($colContent)
+                $grid.ColumnDefinitions.Add($colBtns)
+
+                # Info Stack
+                $contentStack = New-Object System.Windows.Controls.StackPanel
+                [System.Windows.Controls.Grid]::SetColumn($contentStack, 0)
+
+                $timeText = New-Object System.Windows.Controls.TextBlock
+                $timeText.Text = "🕒 " + $item.Time
+                $timeText.Foreground = $bc.ConvertFromString($p.TextMuted)
+                $timeText.FontSize = 11
+                $contentStack.Children.Add($timeText) | Out-Null
+
                 $descText = New-Object System.Windows.Controls.TextBlock
-                $descText.Text = "$($item.Time) - $($item.Description)"
+                $descText.Text = $item.Description
                 $descText.Foreground = $bc.ConvertFromString($p.CardText)
                 $descText.FontSize = 13
                 $descText.FontWeight = [System.Windows.FontWeights]::Bold
                 $descText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+                $contentStack.Children.Add($descText) | Out-Null
 
-                $card.Child = $descText
+                if ($item.Location) {
+                    $locText = New-Object System.Windows.Controls.TextBlock
+                    $locText.Text = "📍 " + $item.Location
+                    $locText.Foreground = $bc.ConvertFromString($p.TextMuted)
+                    $locText.FontSize = 11
+                    $contentStack.Children.Add($locText) | Out-Null
+                }
+
+                # Buttons Panel
+                $btnStack = New-Object System.Windows.Controls.StackPanel
+                $btnStack.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+                [System.Windows.Controls.Grid]::SetColumn($btnStack, 1)
+
+                # Edit Button
+                $editBtn = New-Object System.Windows.Controls.Button
+                $editBtn.Content = "✏️"
+                $editBtn.Foreground = $bc.ConvertFromString("#CDD6F4")
+                $editBtn.Background = [System.Windows.Media.Brushes]::Transparent
+                $editBtn.BorderThickness = 0
+                $editBtn.FontSize = 12
+                $editBtn.Margin = New-Object System.Windows.Thickness(0, 0, 4, 0)
+                $editBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+                $editBtn.Tag = $item
+                $editBtn.Add_Click({
+                    Open-EditDialog $this.Tag
+                    & $renderDayStack
+                    Render-Cards
+                    Render-CustomCalendar
+                })
+
+                # Delete Button
+                $delBtn = New-Object System.Windows.Controls.Button
+                $delBtn.Content = "🗑"
+                $delBtn.Foreground = $bc.ConvertFromString("#E64553")
+                $delBtn.Background = [System.Windows.Media.Brushes]::Transparent
+                $delBtn.BorderThickness = 0
+                $delBtn.FontSize = 12
+                $delBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+                $delBtn.Tag = $item
+                $delBtn.Add_Click({
+                    $this.Tag.Deleted = "TRUE"
+                    Save-Data
+                    & $renderDayStack
+                    Render-Cards
+                    Render-CustomCalendar
+                })
+
+                $btnStack.Children.Add($editBtn) | Out-Null
+                $btnStack.Children.Add($delBtn) | Out-Null
+
+                $grid.Children.Add($contentStack) | Out-Null
+                $grid.Children.Add($btnStack) | Out-Null
+
+                $card.Child = $grid
                 $doStack.Children.Add($card) | Out-Null
             }
         }
@@ -1603,9 +1846,9 @@ function Render-Cards {
     $p = Get-Palette
     $bc = [System.Windows.Media.BrushConverter]::new()
     
-    $activeTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+    $filteredTasks = Get-FilteredTasks
     
-    foreach ($item in $activeTasks) {
+    foreach ($item in $filteredTasks) {
         $card = New-Object System.Windows.Controls.Border
         $card.CornerRadius = New-Object System.Windows.CornerRadius(12)
         $card.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
