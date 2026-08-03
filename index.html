@@ -236,16 +236,40 @@ $xaml = @'
                     <StackPanel Name="TaskContainer"/>
                 </ScrollViewer>
 
-                <Border Name="CalendarViewContainer" Background="#181825" CornerRadius="12" Padding="8" Visibility="Collapsed">
-                    <Grid>
+                <!-- High Performance Custom Month View Grid -->
+                <Border Name="CalendarViewContainer" Background="#181825" CornerRadius="12" Padding="10" Visibility="Collapsed">
+                    <Grid Name="CalGridMaster">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Text="Click blue highlighted dates to view events" Foreground="#7F849C" FontSize="11" HorizontalAlignment="Center" Margin="0,0,0,6"/>
-                        <Viewbox Grid.Row="1" Stretch="Uniform" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-                            <Calendar Name="MainViewCalendar" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Viewbox>
+
+                        <!-- Month Nav Header -->
+                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Name="CalPrevBtn" Content="◄" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="8,4" Cursor="Hand"/>
+                            <TextBlock Name="CalMonthTitle" Grid.Column="1" Text="August 2026" Foreground="#CDD6F4" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Button Name="CalNextBtn" Grid.Column="2" Content="►" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="8,4" Cursor="Hand"/>
+                        </Grid>
+
+                        <!-- Weekday Header -->
+                        <UniformGrid Grid.Row="1" Columns="7" Margin="0,0,0,6">
+                            <TextBlock Text="Sun" Foreground="#7F849C" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Mon" Foreground="#7F849C" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Tue" Foreground="#7F849C" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Wed" Foreground="#7F849C" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Thu" Foreground="#7F849C" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Fri" Foreground="#7F849C" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Sat" Foreground="#7F849C" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        </UniformGrid>
+
+                        <!-- Month Days Grid -->
+                        <UniformGrid Name="CalDaysGrid" Grid.Row="2" Rows="6" Columns="7"/>
                     </Grid>
                 </Border>
             </Grid>
@@ -308,7 +332,10 @@ $viewToggleBtn   = $window.FindName('ViewToggleBtn')
 $manageTagsBtn   = $window.FindName('ManageTagsBtn')
 $feedScrollViewer = $window.FindName('FeedScrollViewer')
 $calendarViewContainer = $window.FindName('CalendarViewContainer')
-$mainViewCalendar = $window.FindName('MainViewCalendar')
+$calPrevBtn      = $window.FindName('CalPrevBtn')
+$calNextBtn      = $window.FindName('CalNextBtn')
+$calMonthTitle   = $window.FindName('CalMonthTitle')
+$calDaysGrid     = $window.FindName('CalDaysGrid')
 $taskContainer   = $window.FindName('TaskContainer')
 $startupBtn      = $window.FindName('StartupBtn')
 $footerText      = $window.FindName('FooterText')
@@ -320,9 +347,9 @@ $global:selectedTagIds = [System.Collections.Generic.List[string]]::new()
 $global:isDarkMode = $true
 $global:timeStepMode = "1h"
 $global:isCalendarView = $false
+$global:calDisplayDate = Get-Date
 $global:draggedTask = $null
 $global:dragStartPoint = [System.Windows.Point]::new(0, 0)
-$script:suppressMainCal = $false
 
 function Get-Palette {
     if ($global:isDarkMode) {
@@ -346,50 +373,95 @@ function Get-Palette {
     }
 }
 
-# Helper to find WPF Visual Tree elements
-function Get-VisualChildren ($parent, $type) {
-    $children = [System.Collections.Generic.List[System.Windows.Media.Visual]]::new()
-    if ($parent -is [System.Windows.Media.Visual]) {
-        $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($parent)
-        for ($i = 0; $i -lt $count; $i++) {
-            $child = [System.Windows.Media.VisualTreeHelper]::GetChild($parent, $i)
-            if ($child -is $type) {
-                $children.Add($child)
-            }
-            $children.AddRange((Get-VisualChildren $child $type))
-        }
-    }
-    return $children
-}
-
-# Calendar Event Date Highlighting Engine
-function Highlight-CalendarDates {
+# High-Performance Custom Calendar Month Grid Engine
+function Render-CustomCalendar {
     if (-not $global:isCalendarView) { return }
-    
-    $window.Dispatcher.BeginInvoke([Action]{
-        $dayButtons = Get-VisualChildren $mainViewCalendar ([System.Windows.Controls.Primitives.CalendarDayButton])
-        $activeTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
-        $eventDates = $activeTasks | ForEach-Object { $_.EventDate } | Select-Object -Unique
 
-        $bc = [System.Windows.Media.BrushConverter]::new()
-        $p = Get-Palette
+    $calMonthTitle.Text = $global:calDisplayDate.ToString("MMMM yyyy")
+    $calDaysGrid.Children.Clear()
 
-        foreach ($btn in $dayButtons) {
-            if ($btn.DataContext -is [DateTime]) {
-                $dStr = $btn.DataContext.ToString("dd-MM-yyyy")
-                if ($eventDates -contains $dStr) {
-                    $btn.Background = $bc.ConvertFromString("#89B4FA")
-                    $btn.Foreground = $bc.ConvertFromString("#11111B")
-                    $btn.FontWeight = [System.Windows.FontWeights]::Bold
-                } else {
-                    $btn.Background = [System.Windows.Media.Brushes]::Transparent
-                    $btn.Foreground = $bc.ConvertFromString($p.TextPrimary)
-                    $btn.FontWeight = [System.Windows.FontWeights]::Normal
-                }
-            }
+    $p = Get-Palette
+    $bc = [System.Windows.Media.BrushConverter]::new()
+
+    $year = $global:calDisplayDate.Year
+    $month = $global:calDisplayDate.Month
+
+    $firstDay = [DateTime]::new($year, $month, 1)
+    $startDow = [int]$firstDay.DayOfWeek
+    $daysInMonth = [DateTime]::DaysInMonth($year, $month)
+
+    $activeTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+
+    # Leading Empty Space Cells
+    for ($i = 0; $i -lt $startDow; $i++) {
+        $emptyBox = New-Object System.Windows.Controls.Border
+        $emptyBox.Background = [System.Windows.Media.Brushes]::Transparent
+        $calDaysGrid.Children.Add($emptyBox) | Out-Null
+    }
+
+    # Month Days Cells
+    for ($day = 1; $day -le $daysInMonth; $day++) {
+        $currDate = [DateTime]::new($year, $month, $day)
+        $dStr = $currDate.ToString("dd-MM-yyyy")
+
+        $dayTasks = $activeTasks | Where-Object { $_.EventDate -eq $dStr }
+        $taskCount = $dayTasks.Count
+
+        $btn = New-Object System.Windows.Controls.Button
+        $btn.Margin = New-Object System.Windows.Thickness(2)
+        $btn.Cursor = [System.Windows.Input.Cursors]::Hand
+
+        $btnTemplate = @"
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
+    <Border Name="bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="2">
+        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Border>
+</ControlTemplate>
+"@
+        $btn.Template = [System.Windows.Markup.XamlReader]::Parse($btnTemplate)
+
+        if ($taskCount -gt 0) {
+            # Highlighted Day with Event(s)
+            $btn.Background = $bc.ConvertFromString("#89B4FA")
+            $btn.Foreground = $bc.ConvertFromString("#11111B")
+            $btn.Content = "$day ($taskCount)"
+            $btn.FontWeight = [System.Windows.FontWeights]::Bold
+        } else {
+            # Standard Day Cell
+            $btn.Background = $bc.ConvertFromString($p.InputBg)
+            $btn.Foreground = $bc.ConvertFromString($p.TextPrimary)
+            $btn.Content = "$day"
+            $btn.FontWeight = [System.Windows.FontWeights]::Normal
         }
-    }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
+
+        $btn.Tag = $dStr
+        $btn.Add_Click({
+            Open-DayOverview $this.Tag
+        })
+
+        $calDaysGrid.Children.Add($btn) | Out-Null
+    }
+
+    # Trailing Cells
+    $totalCellsSoFar = $startDow + $daysInMonth
+    $targetTotal = if ($totalCellsSoFar -gt 35) { 42 } else { 35 }
+
+    for ($i = $totalCellsSoFar; $i -lt $targetTotal; $i++) {
+        $emptyBox = New-Object System.Windows.Controls.Border
+        $emptyBox.Background = [System.Windows.Media.Brushes]::Transparent
+        $calDaysGrid.Children.Add($emptyBox) | Out-Null
+    }
 }
+
+$calPrevBtn.Add_Click({
+    $global:calDisplayDate = $global:calDisplayDate.AddMonths(-1)
+    Render-CustomCalendar
+})
+
+$calNextBtn.Add_Click({
+    $global:calDisplayDate = $global:calDisplayDate.AddMonths(1)
+    Render-CustomCalendar
+})
 
 function Update-PinStatus {
     $p = Get-Palette
@@ -484,7 +556,7 @@ function Apply-Theme {
     Update-PinStatus
     Update-StartupStatus
     Render-Cards
-    Highlight-CalendarDates
+    Render-CustomCalendar
 }
 
 # Tag CSV Handler
@@ -539,7 +611,7 @@ function Load-Data {
 function Save-Data {
     try {
         $global:tasks | Export-Csv -Path $filePath -NoTypeInformation -Encoding utf8 -ErrorAction Stop
-        Highlight-CalendarDates
+        Render-CustomCalendar
     } catch {
         [System.Windows.MessageBox]::Show("Warning: Could not save to 'Widget_Data.csv'. Please close Excel if open.", "File Lock Error")
     }
@@ -623,7 +695,6 @@ function Open-TagManager {
                     <Button Name="TMPickerBtn" Grid.Column="2" Content="🎨 Custom" Foreground="#CDD6F4" Background="#45475A" BorderThickness="0" FontSize="11" Padding="6,5" Cursor="Hand"/>
                 </Grid>
 
-                <!-- Color Swatches Grid -->
                 <WrapPanel Name="TMSwatchPanel" HorizontalAlignment="Center" Margin="0,2,0,6"/>
 
                 <Button Name="TMAddBtn" Content="+ Add New Tag" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Cursor="Hand"/>
@@ -761,7 +832,6 @@ function Open-RoutineGenerator {
                     <TextBlock Text="Time (HH:mm):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                     <TextBox Name="RGTime" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
 
-                    <!-- Tags Selector in Routine Generator -->
                     <TextBlock Text="Tags:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                     <Button Name="RGSelectTagsBtn" Content="🏷️ Select Tags (0)" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Margin="0,0,0,8" Cursor="Hand" HorizontalAlignment="Left"/>
                     <Popup Name="RGTagPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=RGSelectTagsBtn}" Placement="Bottom">
@@ -773,14 +843,16 @@ function Open-RoutineGenerator {
                     </Popup>
 
                     <TextBlock Text="Generation Mode:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
-                    <ComboBox Name="RGModeCombo" Foreground="#CDD6F4" Background="#313244" Margin="0,0,0,8" SelectedIndex="0">
-                        <ComboBoxItem Content="Multi-Select Dates Calendar (Click to toggle)" Background="#313244" Foreground="#CDD6F4"/>
-                        <ComboBoxItem Content="Weekly Routine (e.g. Every Mon/Wed)" Background="#313244" Foreground="#CDD6F4"/>
-                        <ComboBoxItem Content="Monthly Routine (e.g. Every 15th)" Background="#313244" Foreground="#CDD6F4"/>
+                    
+                    <!-- Solid High-Contrast ComboBox -->
+                    <ComboBox Name="RGModeCombo" Background="#FFFFFF" Foreground="#11111B" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8" SelectedIndex="0">
+                        <ComboBoxItem Content="Multi-Select Dates Calendar" Background="#FFFFFF" Foreground="#11111B"/>
+                        <ComboBoxItem Content="Weekly Routine (e.g. Every Mon/Wed)" Background="#FFFFFF" Foreground="#11111B"/>
+                        <ComboBoxItem Content="Monthly Routine (e.g. Every 15th)" Background="#FFFFFF" Foreground="#11111B"/>
                     </ComboBox>
 
                     <StackPanel Name="RGMultiDatePanel" Margin="0,0,0,8">
-                        <TextBlock Text="Click dates to select / unselect:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                        <TextBlock Text="💬 Hold Ctrl to select non-continuous dates, Shift for date ranges:" Foreground="#A6E3A1" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4"/>
                         <Calendar Name="RGMultiCal" SelectionMode="MultipleRange" HorizontalAlignment="Center"/>
                     </StackPanel>
 
@@ -858,32 +930,6 @@ function Open-RoutineGenerator {
         $rgTagPopup.IsOpen = $true
     })
 
-    $script:rgSelectedDates = [System.Collections.Generic.List[DateTime]]::new()
-    $script:suppressCalEvent = $false
-
-    $rgMultiCal.Add_SelectedDatesChanged({
-        if ($script:suppressCalEvent) { return }
-        $script:suppressCalEvent = $true
-
-        $clicked = $rgMultiCal.SelectedDate
-        if ($clicked) {
-            $dateOnly = $clicked.Value.Date
-            $existing = $script:rgSelectedDates | Where-Object { $_.Date -eq $dateOnly }
-            if ($existing) {
-                $script:rgSelectedDates.Remove($existing) | Out-Null
-            } else {
-                $script:rgSelectedDates.Add($dateOnly)
-            }
-
-            $rgMultiCal.SelectedDates.Clear()
-            foreach ($d in $script:rgSelectedDates) {
-                $rgMultiCal.SelectedDates.Add($d)
-            }
-        }
-
-        $script:suppressCalEvent = $false
-    })
-
     $rgCombo.Add_SelectionChanged({
         if ($rgCombo.SelectedIndex -eq 0) {
             $rgMultiPan.Visibility = [System.Windows.Visibility]::Visible
@@ -908,7 +954,7 @@ function Open-RoutineGenerator {
             $targetDates = [System.Collections.Generic.List[DateTime]]::new()
 
             if ($rgCombo.SelectedIndex -eq 0) {
-                foreach ($d in $script:rgSelectedDates) {
+                foreach ($d in $rgMultiCal.SelectedDates) {
                     $targetDates.Add($d)
                 }
             } else {
@@ -1039,29 +1085,13 @@ function Open-DayOverview ($dateStr) {
     $doWin.ShowDialog() | Out-Null
 }
 
-$mainViewCalendar.Add_SelectedDatesChanged({
-    if ($script:suppressMainCal) { return }
-    if ($mainViewCalendar.SelectedDate) {
-        $selectedStr = $mainViewCalendar.SelectedDate.ToString("dd-MM-yyyy")
-        $script:suppressMainCal = $true
-        Open-DayOverview $selectedStr
-        $mainViewCalendar.SelectedDate = $null
-        $script:suppressMainCal = $false
-        Highlight-CalendarDates
-    }
-})
-
-$mainViewCalendar.Add_DisplayDateChanged({
-    Highlight-CalendarDates
-})
-
 $viewToggleBtn.Add_Click({
     $global:isCalendarView = -not $global:isCalendarView
     if ($global:isCalendarView) {
         $feedScrollViewer.Visibility = [System.Windows.Visibility]::Collapsed
         $calendarViewContainer.Visibility = [System.Windows.Visibility]::Visible
         $viewToggleBtn.Content = "📋 Feed View"
-        Highlight-CalendarDates
+        Render-CustomCalendar
     } else {
         $feedScrollViewer.Visibility = [System.Windows.Visibility]::Visible
         $calendarViewContainer.Visibility = [System.Windows.Visibility]::Collapsed
