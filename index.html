@@ -1,0 +1,1706 @@
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+# Ensure paths resolve to the script's exact directory
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $scriptDir) { $scriptDir = $PSScriptRoot }
+if (-not $scriptDir) { $scriptDir = [Environment]::CurrentDirectory }
+
+$filePath = Join-Path $scriptDir "Widget_Data.csv"
+$tagPath  = Join-Path $scriptDir "Widget_Tags.csv"
+$startupShortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\DesktopWidget.lnk"
+
+# Main Window XAML
+$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Daily Operations Assistant" Height="700" Width="400" MinHeight="500" MinWidth="340"
+        WindowStyle="None" AllowsTransparency="True" 
+        Background="Transparent" Topmost="True" 
+        ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen">
+    <Border Name="MainBorder" Background="#CC1E1E2E" CornerRadius="20" BorderBrush="#45475A" BorderThickness="1.5" Margin="10">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="25" Color="#000000" Opacity="0.6" ShadowDepth="6"/>
+        </Border.Effect>
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <!-- Header -->
+            <Grid Grid.Row="0" Margin="0,0,0,12" Background="Transparent" Name="HeaderGrid">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Name="TitleText" Text="⚡ Daily Assistant" Foreground="#CDD6F4" FontSize="17" FontWeight="Bold"/>
+                </StackPanel>
+                
+                <Button Name="CollapseBtn" Grid.Column="1" Content="🔼" Foreground="#CDD6F4" Background="Transparent" 
+                        BorderThickness="0" FontSize="13" Margin="0,0,4,0" Cursor="Hand" Width="26" Height="26" ToolTip="Toggle Input Panel"/>
+
+                <Button Name="ThemeBtn" Grid.Column="2" Content="🌙" Foreground="#CDD6F4" Background="Transparent" 
+                        BorderThickness="0" FontSize="15" Margin="0,0,6,0" Cursor="Hand" Width="26" Height="26"/>
+
+                <Button Name="PinBtn" Grid.Column="3" Content="📌 Pinned" Foreground="#11111B" Background="#89B4FA" 
+                        BorderThickness="0" FontSize="12" FontWeight="Bold" Padding="8,4" Margin="0,0,8,0" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <Button Name="MinBtn" Grid.Column="4" Content="─" Foreground="#A6ADC8" Background="Transparent" BorderThickness="0" FontSize="14" FontWeight="Bold" Cursor="Hand" Width="24" Height="24" Margin="0,0,2,0"/>
+                <Button Name="CloseBtn" Grid.Column="5" Content="✕" Foreground="#A6ADC8" Background="Transparent" BorderThickness="0" FontSize="15" FontWeight="Bold" Cursor="Hand" Width="24" Height="24"/>
+            </Grid>
+
+            <!-- Input Form Section -->
+            <Border Name="InputBorder" Grid.Row="1" Background="#181825" CornerRadius="12" Padding="10" Margin="0,0,0,12">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="85"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Name="DescLabel" Grid.Row="0" Grid.Column="0" Text="Description:" Foreground="#CDD6F4" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,4,6"/>
+                        <TextBox Name="DescInput" Grid.Row="0" Grid.Column="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="13" Padding="8,6" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                        <TextBlock Name="LocLabel" Grid.Row="1" Grid.Column="0" Text="Location:" Foreground="#CDD6F4" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,4,6"/>
+                        <TextBox Name="LocInput" Grid.Row="1" Grid.Column="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="13" Padding="8,6" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                        <TextBlock Name="RemLabel" Grid.Row="2" Grid.Column="0" Text="Remarks:" Foreground="#CDD6F4" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,4,6"/>
+                        <TextBox Name="RemInput" Grid.Row="2" Grid.Column="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="13" Padding="8,6" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                        <!-- Tag Selector Button -->
+                        <TextBlock Name="TagsLabel" Grid.Row="3" Grid.Column="0" Text="Tags:" Foreground="#CDD6F4" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <Button Name="SelectTagsBtn" Grid.Row="3" Grid.Column="1" Content="🏷️ Select Tags (0)" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="8,5" Cursor="Hand" HorizontalAlignment="Left"/>
+                        <Popup Name="TagPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=SelectTagsBtn}" Placement="Bottom">
+                            <Border Name="TagPopupBorder" Background="#1E1E2E" BorderBrush="#45475A" BorderThickness="1" CornerRadius="8" Padding="8" MaxHeight="160">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <StackPanel Name="TagCheckboxContainer"/>
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+
+                    <!-- Date & Time Row -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="1.25*"/>
+                        </Grid.ColumnDefinitions>
+                        
+                        <Grid Grid.Column="0" Margin="0,0,4,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Name="DateInput" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="6,5" CaretBrush="#89B4FA"/>
+                            <Button Name="CalBtn" Grid.Column="1" Content="📅" BorderThickness="0" FontSize="12" Padding="6,4" Cursor="Hand">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                            <Popup Name="CalPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=CalBtn}" Placement="Bottom">
+                                <Border Name="CalBorder" Background="#1E1E2E" BorderBrush="#45475A" BorderThickness="1" CornerRadius="8" Padding="4">
+                                    <Calendar Name="CalCtrl"/>
+                                </Border>
+                            </Popup>
+                        </Grid>
+
+                        <Grid Grid.Column="1" Margin="4,0,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Name="TimeInput" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="6,5" CaretBrush="#89B4FA"/>
+                            
+                            <Button Name="TimeStepModeBtn" Grid.Column="1" Content="1h" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="5,2" Margin="3,0,1,0" Cursor="Hand">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                            
+                            <Button Name="TimeMinusBtn" Grid.Column="2" Content="-" BorderThickness="0" FontSize="13" FontWeight="Bold" Width="22" Margin="1,0,1,0" Cursor="Hand">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                            
+                            <Button Name="TimePlusBtn" Grid.Column="3" Content="+" BorderThickness="0" FontSize="13" FontWeight="Bold" Width="22" Margin="1,0,0,0" Cursor="Hand">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </Grid>
+                    </Grid>
+                    
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Name="AddBtn" Grid.Column="0" Content="+ Save Entry" Foreground="#11111B" Background="#89B4FA" BorderThickness="0" FontWeight="Bold" FontSize="13" Padding="0,7" Margin="0,0,6,0" Cursor="Hand">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                        <Button Name="BatchGenBtn" Grid.Column="1" Content="🔄 Batch / Routine" Foreground="#CDD6F4" Background="#45475A" BorderThickness="0" FontWeight="Bold" FontSize="12" Padding="10,7" Cursor="Hand">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Control Toolbar -->
+            <DockPanel Grid.Row="2" Margin="0,0,0,8">
+                <Button Name="SortBtn" Content="⏳ Sort" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,0" Cursor="Hand" DockPanel.Dock="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <Button Name="ViewToggleBtn" Content="📅 Calendar View" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,0" Cursor="Hand" DockPanel.Dock="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <Button Name="ManageTagsBtn" Content="🏷️ Manage Tags" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Cursor="Hand" DockPanel.Dock="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </DockPanel>
+
+            <!-- Lower Container: List Feed vs Calendar View -->
+            <Grid Grid.Row="3" Margin="0,0,0,8">
+                <ScrollViewer Name="FeedScrollViewer" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Name="TaskContainer"/>
+                </ScrollViewer>
+
+                <Border Name="CalendarViewContainer" Background="#181825" CornerRadius="12" Padding="8" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Click any date to view / edit events" Foreground="#7F849C" FontSize="11" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                        <Calendar Name="MainViewCalendar" Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- Footer Controls -->
+            <DockPanel Grid.Row="4" Margin="0,4,0,0">
+                <Button Name="StartupBtn" Content="🚀 Startup: OFF" Foreground="#BAC2DE" Background="#313244" BorderThickness="0" FontSize="11" Padding="8,4" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <TextBlock Name="FooterText" Text="Drag header / Corner resize" Foreground="#585B70" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Grid>
+    </Border>
+</Window>
+'@
+
+# Direct WPF Window Loading
+$window = [System.Windows.Markup.XamlReader]::Parse($xaml)
+
+# Element References
+$mainBorder      = $window.FindName('MainBorder')
+$inputBorder     = $window.FindName('InputBorder')
+$headerGrid      = $window.FindName('HeaderGrid')
+$titleText       = $window.FindName('TitleText')
+$closeBtn        = $window.FindName('CloseBtn')
+$minBtn          = $window.FindName('MinBtn')
+$pinBtn          = $window.FindName('PinBtn')
+$themeBtn        = $window.FindName('ThemeBtn')
+$collapseBtn     = $window.FindName('CollapseBtn')
+$descLabel       = $window.FindName('DescLabel')
+$descInput       = $window.FindName('DescInput')
+$locLabel        = $window.FindName('LocLabel')
+$locInput        = $window.FindName('LocInput')
+$remLabel        = $window.FindName('RemLabel')
+$remInput        = $window.FindName('RemInput')
+$tagsLabel       = $window.FindName('TagsLabel')
+$selectTagsBtn   = $window.FindName('SelectTagsBtn')
+$tagPopup        = $window.FindName('TagPopup')
+$tagPopupBorder  = $window.FindName('TagPopupBorder')
+$tagCheckboxContainer = $window.FindName('TagCheckboxContainer')
+$dateInput       = $window.FindName('DateInput')
+$calBtn          = $window.FindName('CalBtn')
+$calPopup        = $window.FindName('CalPopup')
+$calBorder       = $window.FindName('CalBorder')
+$calCtrl         = $window.FindName('CalCtrl')
+$timeInput       = $window.FindName('TimeInput')
+$timeStepModeBtn = $window.FindName('TimeStepModeBtn')
+$timeMinusBtn    = $window.FindName('TimeMinusBtn')
+$timePlusBtn     = $window.FindName('TimePlusBtn')
+$addBtn          = $window.FindName('AddBtn')
+$batchGenBtn     = $window.FindName('BatchGenBtn')
+$sortBtn         = $window.FindName('SortBtn')
+$viewToggleBtn   = $window.FindName('ViewToggleBtn')
+$manageTagsBtn   = $window.FindName('ManageTagsBtn')
+$feedScrollViewer = $window.FindName('FeedScrollViewer')
+$calendarViewContainer = $window.FindName('CalendarViewContainer')
+$mainViewCalendar = $window.FindName('MainViewCalendar')
+$taskContainer   = $window.FindName('TaskContainer')
+$startupBtn      = $window.FindName('StartupBtn')
+$footerText      = $window.FindName('FooterText')
+
+# Application State
+$global:tasks = [System.Collections.Generic.List[PSObject]]::new()
+$global:tags  = [System.Collections.Generic.List[PSObject]]::new()
+$global:selectedTagIds = [System.Collections.Generic.List[string]]::new()
+$global:isDarkMode = $true
+$global:timeStepMode = "1h"
+$global:isCalendarView = $false
+$global:draggedTask = $null
+$global:dragStartPoint = [System.Windows.Point]::new(0, 0)
+
+function Get-Palette {
+    if ($global:isDarkMode) {
+        return @{
+            MainBg = "#CC1E1E2E"; MainBorder = "#45475A"; TextPrimary = "#CDD6F4"
+            TextMuted = "#7F849C"; InputBg = "#313244"; CardBg = "#181825"
+            BtnSecBg = "#45475A"; BtnSecText = "#CDD6F4"
+            HighlightBg = "#3E2D48"; HighlightBorder = "#F9E2AF"; CardText = "#CDD6F4"
+            Accent = "#89B4FA"; AccentText = "#11111B"
+            SuccessBg = "#A6E3A1"; SuccessText = "#11111B"
+        }
+    } else {
+        return @{
+            MainBg = "#F0F4F8EE"; MainBorder = "#BCC0CC"; TextPrimary = "#1E1E2E"
+            TextMuted = "#8C8E9A"; InputBg = "#FFFFFF"; CardBg = "#E5E9F0"
+            BtnSecBg = "#D8DEE9"; BtnSecText = "#1E1E2E"
+            HighlightBg = "#FFF3D6"; HighlightBorder = "#DF8E1D"; CardText = "#1E1E2E"
+            Accent = "#2B6CB0"; AccentText = "#FFFFFF"
+            SuccessBg = "#2E7D32"; SuccessText = "#FFFFFF"
+        }
+    }
+}
+
+function Update-PinStatus {
+    $p = Get-Palette
+    $bc = [System.Windows.Media.BrushConverter]::new()
+    if ($window.Topmost) {
+        $pinBtn.Content = "📌 Pinned"
+        $pinBtn.Background = $bc.ConvertFromString($p.Accent)
+        $pinBtn.Foreground = $bc.ConvertFromString($p.AccentText)
+    } else {
+        $pinBtn.Content = "📌 Unpinned"
+        $pinBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+        $pinBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    }
+}
+
+function Update-StartupStatus {
+    $p = Get-Palette
+    $bc = [System.Windows.Media.BrushConverter]::new()
+    if (Test-Path $startupShortcut) {
+        $startupBtn.Content = "🚀 Startup: ON"
+        $startupBtn.Background = $bc.ConvertFromString($p.SuccessBg)
+        $startupBtn.Foreground = $bc.ConvertFromString($p.SuccessText)
+    } else {
+        $startupBtn.Content = "🚀 Startup: OFF"
+        $startupBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+        $startupBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    }
+}
+
+function Apply-Theme {
+    $p = Get-Palette
+    $bc = [System.Windows.Media.BrushConverter]::new()
+
+    $mainBorder.Background = $bc.ConvertFromString($p.MainBg)
+    $mainBorder.BorderBrush = $bc.ConvertFromString($p.MainBorder)
+    $inputBorder.Background = $bc.ConvertFromString($p.CardBg)
+    $titleText.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $footerText.Foreground = $bc.ConvertFromString($p.TextMuted)
+    
+    $descLabel.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $locLabel.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $remLabel.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $tagsLabel.Foreground = $bc.ConvertFromString($p.TextPrimary)
+
+    $descInput.Background = $bc.ConvertFromString($p.InputBg)
+    $locInput.Background = $bc.ConvertFromString($p.InputBg)
+    $remInput.Background = $bc.ConvertFromString($p.InputBg)
+    $dateInput.Background = $bc.ConvertFromString($p.InputBg)
+    $timeInput.Background = $bc.ConvertFromString($p.InputBg)
+    $selectTagsBtn.Background = $bc.ConvertFromString($p.InputBg)
+    
+    $descInput.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $locInput.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $remInput.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $dateInput.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $timeInput.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $selectTagsBtn.Foreground = $bc.ConvertFromString($p.TextPrimary)
+
+    $themeBtn.Content = if ($global:isDarkMode) { "🌙" } else { "☀️" }
+    $themeBtn.Foreground = $bc.ConvertFromString($p.TextPrimary)
+    $collapseBtn.Foreground = $bc.ConvertFromString($p.TextPrimary)
+
+    $calBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $calBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $timeStepModeBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $timeStepModeBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $timeMinusBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $timeMinusBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $timePlusBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $timePlusBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $sortBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $sortBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $viewToggleBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $viewToggleBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $manageTagsBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $manageTagsBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $addBtn.Background = $bc.ConvertFromString($p.Accent)
+    $addBtn.Foreground = $bc.ConvertFromString($p.AccentText)
+    
+    $minBtn.Foreground = $bc.ConvertFromString($p.TextMuted)
+    $closeBtn.Foreground = $bc.ConvertFromString($p.TextMuted)
+
+    if ($calBorder) {
+        $calBorder.Background = $bc.ConvertFromString($p.InputBg)
+        $calBorder.BorderBrush = $bc.ConvertFromString($p.MainBorder)
+    }
+    if ($tagPopupBorder) {
+        $tagPopupBorder.Background = $bc.ConvertFromString($p.InputBg)
+        $tagPopupBorder.BorderBrush = $bc.ConvertFromString($p.MainBorder)
+    }
+
+    Update-PinStatus
+    Update-StartupStatus
+    Render-Cards
+}
+
+# Tag CSV Handler
+function Load-Tags {
+    if (-not (Test-Path $tagPath)) {
+        $defaultTags = @(
+            [PSCustomObject]@{ Id = [Guid]::NewGuid().ToString(); Name = "Work"; ColorHex = "#89B4FA" },
+            [PSCustomObject]@{ Id = [Guid]::NewGuid().ToString(); Name = "Personal"; ColorHex = "#A6E3A1" },
+            [PSCustomObject]@{ Id = [Guid]::NewGuid().ToString(); Name = "Urgent"; ColorHex = "#F38BA8" }
+        )
+        $defaultTags | Export-Csv -Path $tagPath -NoTypeInformation -Encoding utf8
+    }
+    try {
+        $items = Import-Csv -Path $tagPath -Encoding utf8 -ErrorAction Stop
+        $global:tags.Clear()
+        if ($items) {
+            foreach ($t in @($items)) { $global:tags.Add($t) }
+        }
+    } catch { }
+}
+
+function Save-Tags {
+    try {
+        $global:tags | Export-Csv -Path $tagPath -NoTypeInformation -Encoding utf8 -ErrorAction Stop
+    } catch { }
+}
+
+# Task Data Loader
+function Load-Data {
+    if (Test-Path $filePath) {
+        try {
+            $items = Import-Csv -Path $filePath -Encoding utf8 -ErrorAction Stop
+            $global:tasks.Clear()
+            if ($items) {
+                foreach ($item in @($items)) {
+                    if (-not ($item.PSObject.Properties['Alert1_Time'])) { Add-Member -InputObject $item -NotePropertyName "Alert1_Time" -NotePropertyValue "" }
+                    if (-not ($item.PSObject.Properties['Alert1_Done'])) { Add-Member -InputObject $item -NotePropertyName "Alert1_Done" -NotePropertyValue "FALSE" }
+                    if (-not ($item.PSObject.Properties['Alert2_Time'])) { Add-Member -InputObject $item -NotePropertyName "Alert2_Time" -NotePropertyValue "" }
+                    if (-not ($item.PSObject.Properties['Alert2_Done'])) { Add-Member -InputObject $item -NotePropertyName "Alert2_Done" -NotePropertyValue "FALSE" }
+                    if (-not ($item.PSObject.Properties['Alert3_Time'])) { Add-Member -InputObject $item -NotePropertyName "Alert3_Time" -NotePropertyValue "" }
+                    if (-not ($item.PSObject.Properties['Alert3_Done'])) { Add-Member -InputObject $item -NotePropertyName "Alert3_Done" -NotePropertyValue "FALSE" }
+                    if (-not ($item.PSObject.Properties['Tags']))        { Add-Member -InputObject $item -NotePropertyName "Tags"        -NotePropertyValue "" }
+                    $global:tasks.Add($item)
+                }
+            }
+        } catch {
+            [System.Windows.MessageBox]::Show("Warning: Could not read 'Widget_Data.csv'. If open in Excel, please close it.", "File Lock Error")
+        }
+    }
+}
+
+function Save-Data {
+    try {
+        $global:tasks | Export-Csv -Path $filePath -NoTypeInformation -Encoding utf8 -ErrorAction Stop
+    } catch {
+        [System.Windows.MessageBox]::Show("Warning: Could not save to 'Widget_Data.csv'. Please close Excel if open.", "File Lock Error")
+    }
+}
+
+function Reset-Inputs {
+    $descInput.Text = ""
+    $locInput.Text = ""
+    $remInput.Text = ""
+    $dateInput.Text = (Get-Date -Format "dd-MM-yyyy")
+    $timeInput.Text = (Get-Date -Format "HH:mm")
+    $global:selectedTagIds.Clear()
+    $selectTagsBtn.Content = "🏷️ Select Tags (0)"
+}
+
+# Refresh Input Form Tag Selector Popup
+function Refresh-InputTagSelector {
+    $tagCheckboxContainer.Children.Clear()
+    $bc = [System.Windows.Media.BrushConverter]::new()
+    
+    foreach ($t in $global:tags) {
+        $cb = New-Object System.Windows.Controls.CheckBox
+        $cb.Content = $t.Name
+        $cb.Foreground = $bc.ConvertFromString($t.ColorHex)
+        $cb.Margin = New-Object System.Windows.Thickness(2)
+        $cb.Tag = $t.Id
+
+        if ($global:selectedTagIds.Contains($t.Id)) { $cb.IsChecked = $true }
+
+        $cb.Add_Click({
+            if ($this.IsChecked) {
+                if (-not $global:selectedTagIds.Contains($this.Tag)) { $global:selectedTagIds.Add($this.Tag) }
+            } else {
+                $global:selectedTagIds.Remove($this.Tag) | Out-Null
+            }
+            $selectTagsBtn.Content = "🏷️ Select Tags (" + $global:selectedTagIds.Count + ")"
+        })
+
+        $tagCheckboxContainer.Children.Add($cb) | Out-Null
+    }
+}
+
+$selectTagsBtn.Add_Click({
+    Refresh-InputTagSelector
+    $tagPopup.IsOpen = $true
+})
+
+# Tag Manager Dialog
+function Open-TagManager {
+    $tmXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Tag Manager" Height="400" Width="360" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <TextBlock Grid.Row="0" Text="🏷️ Tag Manager" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,12"/>
+
+            <!-- Tag List -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
+                <StackPanel Name="TMTagStack"/>
+            </ScrollViewer>
+
+            <!-- New Tag Inputs -->
+            <Grid Grid.Row="2" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox Name="TMNewName" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,4,0"/>
+                <TextBox Name="TMNewColor" Grid.Column="1" Text="#89B4FA" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,4,0"/>
+                <Button Name="TMAddBtn" Grid.Column="2" Content="+ Add" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="8,5" Cursor="Hand"/>
+            </Grid>
+
+            <Button Name="TMCloseBtn" Grid.Row="3" Content="Done / Close" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Cursor="Hand"/>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $tmWin = [System.Windows.Markup.XamlReader]::Parse($tmXaml)
+    $tmStack    = $tmWin.FindName('TMTagStack')
+    $tmName     = $tmWin.FindName('TMNewName')
+    $tmColor    = $tmWin.FindName('TMNewColor')
+    $tmAddBtn   = $tmWin.FindName('TMAddBtn')
+    $tmCloseBtn = $tmWin.FindName('TMCloseBtn')
+
+    $renderTMList = {
+        $tmStack.Children.Clear()
+        $bc = [System.Windows.Media.BrushConverter]::new()
+
+        foreach ($t in $global:tags) {
+            $row = New-Object System.Windows.Controls.DockPanel
+            $row.Margin = New-Object System.Windows.Thickness(0,0,0,6)
+
+            $delBtn = New-Object System.Windows.Controls.Button
+            $delBtn.Content = "🗑"
+            $delBtn.Foreground = $bc.ConvertFromString("#E64553")
+            $delBtn.Background = [System.Windows.Media.Brushes]::Transparent
+            $delBtn.BorderThickness = 0
+            $delBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+            $delBtn.Tag = $t
+            [System.Windows.Controls.DockPanel]::SetDock($delBtn, [System.Windows.Controls.Dock]::Right)
+            $delBtn.Add_Click({
+                $global:tags.Remove($this.Tag) | Out-Null
+                Save-Tags
+                & $renderTMList
+                Render-Cards
+            })
+
+            $pill = New-Object System.Windows.Controls.Border
+            $pill.CornerRadius = New-Object System.Windows.CornerRadius(6)
+            $pill.Padding = New-Object System.Windows.Thickness(8,3,8,3)
+            $pill.Background = $bc.ConvertFromString($t.ColorHex)
+            $pill.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
+
+            $txt = New-Object System.Windows.Controls.TextBlock
+            $txt.Text = $t.Name
+            $txt.Foreground = $bc.ConvertFromString("#11111B")
+            $txt.FontWeight = [System.Windows.FontWeights]::Bold
+            $txt.FontSize = 11
+            $pill.Child = $txt
+
+            $row.Children.Add($delBtn) | Out-Null
+            $row.Children.Add($pill) | Out-Null
+            $tmStack.Children.Add($row) | Out-Null
+        }
+    }
+
+    & $renderTMList
+
+    $tmAddBtn.Add_Click({
+        if ($tmName.Text.Trim() -ne "") {
+            $color = if ($tmColor.Text.Trim()) { $tmColor.Text.Trim() } else { "#89B4FA" }
+            $newT = [PSCustomObject]@{
+                Id       = [Guid]::NewGuid().ToString()
+                Name     = $tmName.Text.Trim()
+                ColorHex = $color
+            }
+            $global:tags.Add($newT)
+            Save-Tags
+            $tmName.Text = ""
+            & $renderTMList
+            Render-Cards
+        }
+    })
+
+    $tmCloseBtn.Add_Click({ $tmWin.Close() })
+    $tmWin.ShowDialog() | Out-Null
+}
+
+$manageTagsBtn.Add_Click({ Open-TagManager })
+
+# Multi-Date & Routine Generator Dialog
+function Open-RoutineGenerator {
+    $rgXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Batch &amp; Routine Generator" Height="520" Width="400" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <TextBlock Grid.Row="0" Text="🔄 Batch &amp; Routine Generator" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="Description:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <TextBox Name="RGDesc" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
+
+                    <TextBlock Text="Location:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <TextBox Name="RGLoc" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
+
+                    <TextBlock Text="Time (HH:mm):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <TextBox Name="RGTime" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,8"/>
+
+                    <!-- Mode Selector -->
+                    <TextBlock Text="Generation Mode:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <ComboBox Name="RGModeCombo" Foreground="#CDD6F4" Background="#313244" Margin="0,0,0,8" SelectedIndex="0">
+                        <ComboBoxItem Content="Multi-Select Dates Calendar"/>
+                        <ComboBoxItem Content="Weekly Routine (e.g. Every Mon/Wed)"/>
+                        <ComboBoxItem Content="Monthly Routine (e.g. Every 15th)"/>
+                    </ComboBox>
+
+                    <!-- Multi-Date Panel -->
+                    <StackPanel Name="RGMultiDatePanel" Margin="0,0,0,8">
+                        <TextBlock Text="Select Multiple Dates below:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                        <Calendar Name="RGMultiCal" SelectionMode="MultipleRange" HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <!-- Routine Panel -->
+                    <StackPanel Name="RGRoutinePanel" Visibility="Collapsed" Margin="0,0,0,8">
+                        <TextBlock Text="Start Date (dd-MM-yyyy):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                        <TextBox Name="RGStart" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
+
+                        <TextBlock Text="End Date (dd-MM-yyyy):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                        <TextBox Name="RGEnd" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
+
+                        <TextBlock Name="RGRuleHint" Text="Day of Month (1-31):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                        <TextBox Name="RGRuleVal" Text="15" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="2" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Name="RGCancelBtn" Grid.Column="0" Content="Cancel" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,0,4,0" Cursor="Hand"/>
+                <Button Name="RGGenBtn" Grid.Column="1" Content="Generate" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Margin="4,0,0,0" Cursor="Hand"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $rgWin = [System.Windows.Markup.XamlReader]::Parse($rgXaml)
+
+    $rgDesc      = $rgWin.FindName('RGDesc')
+    $rgLoc       = $rgWin.FindName('RGLoc')
+    $rgTime      = $rgWin.FindName('RGTime')
+    $rgCombo     = $rgWin.FindName('RGModeCombo')
+    $rgMultiPan  = $rgWin.FindName('RGMultiDatePanel')
+    $rgMultiCal  = $rgWin.FindName('RGMultiCal')
+    $rgRoutPan   = $rgWin.FindName('RGRoutinePanel')
+    $rgStart     = $rgWin.FindName('RGStart')
+    $rgEnd       = $rgWin.FindName('RGEnd')
+    $rgRuleHint  = $rgWin.FindName('RGRuleHint')
+    $rgRuleVal   = $rgWin.FindName('RGRuleVal')
+    $rgGenBtn    = $rgWin.FindName('RGGenBtn')
+    $rgCancelBtn = $rgWin.FindName('RGCancelBtn')
+
+    $rgTime.Text  = (Get-Date -Format "HH:mm")
+    $rgStart.Text = (Get-Date -Format "dd-MM-yyyy")
+    $rgEnd.Text   = (Get-Date).AddMonths(3).ToString("dd-MM-yyyy")
+
+    $rgCombo.Add_SelectionChanged({
+        if ($rgCombo.SelectedIndex -eq 0) {
+            $rgMultiPan.Visibility = [System.Windows.Visibility]::Visible
+            $rgRoutPan.Visibility  = [System.Windows.Visibility]::Collapsed
+        } elseif ($rgCombo.SelectedIndex -eq 1) {
+            $rgMultiPan.Visibility = [System.Windows.Visibility]::Collapsed
+            $rgRoutPan.Visibility  = [System.Windows.Visibility]::Visible
+            $rgRuleHint.Text = "Weekday (1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun):"
+            $rgRuleVal.Text = "1"
+        } else {
+            $rgMultiPan.Visibility = [System.Windows.Visibility]::Collapsed
+            $rgRoutPan.Visibility  = [System.Windows.Visibility]::Visible
+            $rgRuleHint.Text = "Day of Month (1 to 31):"
+            $rgRuleVal.Text = "15"
+        }
+    })
+
+    $rgCancelBtn.Add_Click({ $rgWin.Close() })
+
+    $rgGenBtn.Add_Click({
+        if ($rgDesc.Text.Trim() -ne "") {
+            $targetDates = [System.Collections.Generic.List[DateTime]]::new()
+
+            if ($rgCombo.SelectedIndex -eq 0) {
+                foreach ($d in $rgMultiCal.SelectedDates) {
+                    $targetDates.Add($d)
+                }
+            } else {
+                $dtStart = [DateTime]::Now
+                $dtEnd   = [DateTime]::Now.AddMonths(3)
+                [DateTime]::TryParseExact($rgStart.Text, "dd-MM-yyyy", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dtStart) | Out-Null
+                [DateTime]::TryParseExact($rgEnd.Text, "dd-MM-yyyy", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dtEnd) | Out-Null
+
+                $curr = $dtStart
+                $ruleNum = 1
+                [int]::TryParse($rgRuleVal.Text, [ref]$ruleNum) | Out-Null
+
+                while ($curr -le $dtEnd) {
+                    if ($rgCombo.SelectedIndex -eq 1) {
+                        # Weekly
+                        $dayOfWeek = [int]$curr.DayOfWeek
+                        if ($dayOfWeek -eq 0) { $dayOfWeek = 7 } # Sunday = 7
+                        if ($dayOfWeek -eq $ruleNum) { $targetDates.Add($curr) }
+                    } else {
+                        # Monthly
+                        if ($curr.Day -eq $ruleNum) { $targetDates.Add($curr) }
+                    }
+                    $curr = $curr.AddDays(1)
+                }
+            }
+
+            foreach ($d in $targetDates) {
+                $newItem = [PSCustomObject]@{
+                    InputDate   = (Get-Date -Format "dd-MM-yyyy HH:mm:ss")
+                    EventDate   = $d.ToString("dd-MM-yyyy")
+                    Time        = if ($rgTime.Text) { $rgTime.Text } else { "09:00" }
+                    Description = $rgDesc.Text.Trim()
+                    Location    = $rgLoc.Text.Trim()
+                    Remarks     = "Routine Entry"
+                    Deleted     = "FALSE"
+                    Highlighted = "FALSE"
+                    Id          = [Guid]::NewGuid().ToString()
+                    Alert1_Time = ""
+                    Alert1_Done = "FALSE"
+                    Alert2_Time = ""
+                    Alert2_Done = "FALSE"
+                    Alert3_Time = ""
+                    Alert3_Done = "FALSE"
+                    Tags        = ($global:selectedTagIds -join ";")
+                }
+                $global:tasks.Insert(0, $newItem)
+            }
+
+            Save-Data
+            Render-Cards
+            $rgWin.Close()
+        }
+    })
+
+    $rgWin.ShowDialog() | Out-Null
+}
+
+$batchGenBtn.Add_Click({ Open-RoutineGenerator })
+
+# Day Overview Window (When clicking date in Calendar View)
+function Open-DayOverview ($dateStr) {
+    $doXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Day Overview" Height="480" Width="380" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <TextBlock Name="DOTitle" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel Name="DOCardStack"/>
+            </ScrollViewer>
+
+            <Button Name="DOCloseBtn" Grid.Row="2" Content="Close" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,8,0,0" Cursor="Hand"/>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $doWin = [System.Windows.Markup.XamlReader]::Parse($doXaml)
+    $doWin.FindName('DOTitle').Text = "📅 Events for " + $dateStr
+    $doStack    = $doWin.FindName('DOCardStack')
+    $doCloseBtn = $doWin.FindName('DOCloseBtn')
+
+    $renderDayStack = {
+        $doStack.Children.Clear()
+        $p = Get-Palette
+        $bc = [System.Windows.Media.BrushConverter]::new()
+        
+        $dayTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" -and $_.EventDate -eq $dateStr }
+
+        if ($dayTasks.Count -eq 0) {
+            $emptyText = New-Object System.Windows.Controls.TextBlock
+            $emptyText.Text = "No events scheduled for this date."
+            $emptyText.Foreground = $bc.ConvertFromString($p.TextMuted)
+            $emptyText.FontSize = 13
+            $emptyText.Margin = New-Object System.Windows.Thickness(0,20,0,0)
+            $emptyText.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+            $doStack.Children.Add($emptyText) | Out-Null
+        } else {
+            foreach ($item in $dayTasks) {
+                # Create Card similar to main feed
+                $card = New-Object System.Windows.Controls.Border
+                $card.CornerRadius = New-Object System.Windows.CornerRadius(10)
+                $card.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
+                $card.Padding = New-Object System.Windows.Thickness(10)
+                $card.Background = $bc.ConvertFromString($p.CardBg)
+
+                $descText = New-Object System.Windows.Controls.TextBlock
+                $descText.Text = "$($item.Time) - $($item.Description)"
+                $descText.Foreground = $bc.ConvertFromString($p.CardText)
+                $descText.FontSize = 13
+                $descText.FontWeight = [System.Windows.FontWeights]::Bold
+                $descText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+
+                $card.Child = $descText
+                $doStack.Children.Add($card) | Out-Null
+            }
+        }
+    }
+
+    & $renderDayStack
+
+    $doCloseBtn.Add_Click({ $doWin.Close() })
+    $doWin.ShowDialog() | Out-Null
+}
+
+$mainViewCalendar.Add_SelectedDatesChanged({
+    if ($mainViewCalendar.SelectedDate) {
+        $selectedStr = $mainViewCalendar.SelectedDate.ToString("dd-MM-yyyy")
+        Open-DayOverview $selectedStr
+    }
+})
+
+$viewToggleBtn.Add_Click({
+    $global:isCalendarView = -not $global:isCalendarView
+    if ($global:isCalendarView) {
+        $feedScrollViewer.Visibility = [System.Windows.Visibility]::Collapsed
+        $calendarViewContainer.Visibility = [System.Windows.Visibility]::Visible
+        $viewToggleBtn.Content = "📋 Feed View"
+    } else {
+        $feedScrollViewer.Visibility = [System.Windows.Visibility]::Visible
+        $calendarViewContainer.Visibility = [System.Windows.Visibility]::Collapsed
+        $viewToggleBtn.Content = "📅 Calendar View"
+    }
+})
+
+# Edit Entry Dialog
+function Open-EditDialog ($task) {
+    $editXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit Entry" Height="480" Width="380" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <TextBlock Grid.Row="0" Text="✏️ Edit Entry" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,12"/>
+
+            <StackPanel Grid.Row="1">
+                <TextBlock Text="Description:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <TextBox Name="EDesc" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                <TextBlock Text="Location:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <TextBox Name="ELoc" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                <TextBlock Text="Remarks:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <TextBox Name="ERem" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                <!-- Tags Section in Edit Dialog -->
+                <TextBlock Text="Tags:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <Button Name="ESelectTagsBtn" Content="🏷️ Select Tags" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Margin="0,0,0,8" Cursor="Hand" HorizontalAlignment="Left"/>
+                <Popup Name="ETagPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=ESelectTagsBtn}" Placement="Bottom">
+                    <Border Background="#1E1E2E" BorderBrush="#45475A" BorderThickness="1" CornerRadius="8" Padding="8" MaxHeight="140">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Name="ETagCheckboxContainer"/>
+                        </ScrollViewer>
+                    </Border>
+                </Popup>
+
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="1.25*"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <Grid Grid.Column="0" Margin="0,0,4,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="EDate" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="6,5" CaretBrush="#89B4FA"/>
+                        <Button Name="ECalBtn" Grid.Column="1" Content="📅" BorderThickness="0" FontSize="12" Padding="6,4" Cursor="Hand" Background="#313244" Foreground="#CDD6F4"/>
+                        <Popup Name="ECalPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=ECalBtn}" Placement="Bottom">
+                            <Border Background="#1E1E2E" BorderBrush="#45475A" BorderThickness="1" CornerRadius="8" Padding="4">
+                                <Calendar Name="ECalCtrl"/>
+                            </Border>
+                        </Popup>
+                    </Grid>
+
+                    <Grid Grid.Column="1" Margin="4,0,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="ETime" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="6,5" CaretBrush="#89B4FA"/>
+                        <Button Name="ETimeStepBtn" Grid.Column="1" Content="1h" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="5,2" Margin="3,0,1,0" Cursor="Hand" Background="#45475A" Foreground="#CDD6F4"/>
+                        <Button Name="ETimeMinusBtn" Grid.Column="2" Content="-" BorderThickness="0" FontSize="13" FontWeight="Bold" Width="20" Margin="1,0,1,0" Cursor="Hand" Background="#45475A" Foreground="#CDD6F4"/>
+                        <Button Name="ETimePlusBtn" Grid.Column="3" Content="+" BorderThickness="0" FontSize="13" FontWeight="Bold" Width="20" Margin="1,0,0,0" Cursor="Hand" Background="#45475A" Foreground="#CDD6F4"/>
+                    </Grid>
+                </Grid>
+            </StackPanel>
+
+            <Grid Grid.Row="2" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Name="ECancelBtn" Grid.Column="0" Content="Cancel" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,0,4,0" Cursor="Hand"/>
+                <Button Name="ESaveBtn" Grid.Column="1" Content="Save Changes" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Margin="4,0,0,0" Cursor="Hand"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $editWin = [System.Windows.Markup.XamlReader]::Parse($editXaml)
+
+    $eDesc = $editWin.FindName('EDesc')
+    $eLoc = $editWin.FindName('ELoc')
+    $eRem = $editWin.FindName('ERem')
+    $eDate = $editWin.FindName('EDate')
+    $eTime = $editWin.FindName('ETime')
+    $eCalBtn = $editWin.FindName('ECalBtn')
+    $eCalPopup = $editWin.FindName('ECalPopup')
+    $eCalCtrl = $editWin.FindName('ECalCtrl')
+    $eStepBtn = $editWin.FindName('ETimeStepBtn')
+    $eMinusBtn = $editWin.FindName('ETimeMinusBtn')
+    $ePlusBtn = $editWin.FindName('ETimePlusBtn')
+    $eSaveBtn = $editWin.FindName('ESaveBtn')
+    $eCancelBtn = $editWin.FindName('ECancelBtn')
+    $eSelectTagsBtn = $editWin.FindName('ESelectTagsBtn')
+    $eTagPopup = $editWin.FindName('ETagPopup')
+    $eTagCheckboxContainer = $editWin.FindName('ETagCheckboxContainer')
+
+    $eDesc.Text = $task.Description
+    $eLoc.Text = $task.Location
+    $eRem.Text = $task.Remarks
+    $eDate.Text = $task.EventDate
+    $eTime.Text = $task.Time
+
+    $script:eSelectedTagIds = [System.Collections.Generic.List[string]]::new()
+    if ($task.Tags) {
+        foreach ($id in $task.Tags.Split(';')) {
+            if ($id) { $script:eSelectedTagIds.Add($id) }
+        }
+    }
+
+    $eSelectTagsBtn.Content = "🏷️ Select Tags (" + $script:eSelectedTagIds.Count + ")"
+
+    $eSelectTagsBtn.Add_Click({
+        $eTagCheckboxContainer.Children.Clear()
+        $bc = [System.Windows.Media.BrushConverter]::new()
+        foreach ($t in $global:tags) {
+            $cb = New-Object System.Windows.Controls.CheckBox
+            $cb.Content = $t.Name
+            $cb.Foreground = $bc.ConvertFromString($t.ColorHex)
+            $cb.Margin = New-Object System.Windows.Thickness(2)
+            $cb.Tag = $t.Id
+            if ($script:eSelectedTagIds.Contains($t.Id)) { $cb.IsChecked = $true }
+
+            $cb.Add_Click({
+                if ($this.IsChecked) {
+                    if (-not $script:eSelectedTagIds.Contains($this.Tag)) { $script:eSelectedTagIds.Add($this.Tag) }
+                } else {
+                    $script:eSelectedTagIds.Remove($this.Tag) | Out-Null
+                }
+                $eSelectTagsBtn.Content = "🏷️ Select Tags (" + $script:eSelectedTagIds.Count + ")"
+            })
+            $eTagCheckboxContainer.Children.Add($cb) | Out-Null
+        }
+        $eTagPopup.IsOpen = $true
+    })
+
+    $script:editTimeStepMode = "1h"
+    $eStepBtn.Content = "1h"
+
+    $eCalBtn.Add_Click({ $eCalPopup.IsOpen = $true })
+    $eCalCtrl.Add_SelectedDatesChanged({
+        if ($eCalCtrl.SelectedDate) {
+            $eDate.Text = $eCalCtrl.SelectedDate.ToString("dd-MM-yyyy")
+            $eCalPopup.IsOpen = $false
+        }
+    })
+
+    $eStepBtn.Add_Click({
+        if ($script:editTimeStepMode -eq "1h") { 
+            $script:editTimeStepMode = "5m" 
+        } else { 
+            $script:editTimeStepMode = "1h" 
+        }
+        $eStepBtn.Content = $script:editTimeStepMode
+    })
+
+    $eMinusBtn.Add_Click({
+        $currentTime = [DateTime]::Now
+        [void][DateTime]::TryParseExact($eTime.Text, "HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
+        if ($script:editTimeStepMode -eq "1h") {
+            $currentTime = $currentTime.AddHours(-1)
+        } else {
+            $m = $currentTime.Minute
+            $rem = $m % 5
+            $sub = if ($rem -ne 0) { $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes(-$sub)
+        }
+        $eTime.Text = $currentTime.ToString("HH:mm")
+    })
+
+    $ePlusBtn.Add_Click({
+        $currentTime = [DateTime]::Now
+        [void][DateTime]::TryParseExact($eTime.Text, "HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
+        if ($script:editTimeStepMode -eq "1h") {
+            $currentTime = $currentTime.AddHours(1)
+        } else {
+            $m = $currentTime.Minute
+            $rem = $m % 5
+            $add = if ($rem -ne 0) { 5 - $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes($add)
+        }
+        $eTime.Text = $currentTime.ToString("HH:mm")
+    })
+
+    $eCancelBtn.Add_Click({ $editWin.Close() })
+
+    $eSaveBtn.Add_Click({
+        if ($eDesc.Text.Trim() -ne "") {
+            $task.Description = $eDesc.Text.Trim()
+            $task.Location    = $eLoc.Text.Trim()
+            $task.Remarks     = $eRem.Text.Trim()
+            $task.EventDate   = if ($eDate.Text) { $eDate.Text } else { (Get-Date -Format "dd-MM-yyyy") }
+            $task.Time        = if ($eTime.Text) { $eTime.Text } else { (Get-Date -Format "HH:mm") }
+            $task.Tags        = ($script:eSelectedTagIds -join ";")
+
+            Save-Data
+            Render-Cards
+        }
+        $editWin.Close()
+    })
+
+    $editWin.ShowDialog() | Out-Null
+}
+
+# Notification Pop-Up Window
+function Show-AlertNotification ($task, $alertNum) {
+    $notifXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Event Reminder" Height="270" Width="360" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#F9E2AF" BorderThickness="2" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBlock Text="🔔 EVENT REMINDER" Foreground="#F9E2AF" FontSize="15" FontWeight="Bold"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="1">
+                <TextBlock Name="NotifDesc" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                <TextBlock Name="NotifTime" Foreground="#A6ADC8" FontSize="12" Margin="0,0,0,2"/>
+                <TextBlock Name="NotifLoc" Foreground="#A6ADC8" FontSize="12" Margin="0,0,0,2"/>
+                <TextBlock Name="NotifRem" Foreground="#A6ADC8" FontSize="12"/>
+            </StackPanel>
+
+            <Button Name="OkBtn" Grid.Row="2" Content="OK (Press Enter)" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="13" Padding="0,8" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $notifWin = [System.Windows.Markup.XamlReader]::Parse($notifXaml)
+
+    $notifWin.FindName('NotifDesc').Text = $task.Description
+    $notifWin.FindName('NotifTime').Text = "📅 " + $task.EventDate + " at " + $task.Time
+    $notifWin.FindName('NotifLoc').Text  = if ($task.Location) { "📍 Location: " + $task.Location } else { "" }
+    $notifWin.FindName('NotifRem').Text  = if ($task.Remarks) { "💬 Remarks: " + $task.Remarks } else { "" }
+
+    $okBtn = $notifWin.FindName('OkBtn')
+    $okBtn.Add_Click({ $notifWin.Close() })
+    $notifWin.Add_KeyDown({ if ($_.Key -eq [System.Windows.Input.Key]::Return -or $_.Key -eq [System.Windows.Input.Key]::Space) { $notifWin.Close() } })
+    
+    $notifWin.ShowDialog() | Out-Null
+}
+
+# Alert Checking Engine
+function Check-Alerts {
+    $now = Get-Date
+    $needsSave = $false
+
+    foreach ($t in $global:tasks) {
+        if ($t.Deleted -eq "TRUE" -or $t.Deleted -eq "True") { continue }
+
+        for ($i = 1; $i -le 3; $i++) {
+            $timeProp = "Alert${i}_Time"
+            $doneProp = "Alert${i}_Done"
+
+            if ($t.$timeProp -and ($t.$doneProp -ne "TRUE")) {
+                $alertDt = [DateTime]::MinValue
+                if ([DateTime]::TryParseExact($t.$timeProp, "dd-MM-yyyy HH:mm:ss", $null, [System.Globalization.DateTimeStyles]::None, [ref]$alertDt)) {
+                    if ($now -ge $alertDt) {
+                        Show-AlertNotification $t $i
+                        $t.$doneProp = "TRUE"
+                        $needsSave = $true
+                    }
+                }
+            }
+        }
+    }
+
+    if ($needsSave) {
+        Save-Data
+        Render-Cards
+    }
+}
+
+# Alert Configuration Dialog
+function Open-AlertConfigurator ($task) {
+    $configXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Configure Alerts" Height="380" Width="380" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <TextBlock Grid.Row="0" Text="🔔 Configure Reminders (Up to 3)" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,12"/>
+
+            <StackPanel Grid.Row="1">
+                <TextBlock Text="Alert 1:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="80"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Name="Val1" Grid.Column="0" Text="15" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
+                    <ComboBox Name="Unit1" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="0">
+                        <ComboBoxItem Content="Mins"/>
+                        <ComboBoxItem Content="Hours"/>
+                        <ComboBoxItem Content="Days"/>
+                    </ComboBox>
+                    <CheckBox Name="Ena1" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                </Grid>
+
+                <TextBlock Text="Alert 2:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="80"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Name="Val2" Grid.Column="0" Text="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
+                    <ComboBox Name="Unit2" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="1">
+                        <ComboBoxItem Content="Mins"/>
+                        <ComboBoxItem Content="Hours"/>
+                        <ComboBoxItem Content="Days"/>
+                    </ComboBox>
+                    <CheckBox Name="Ena2" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                </Grid>
+
+                <TextBlock Text="Alert 3:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="80"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Name="Val3" Grid.Column="0" Text="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
+                    <ComboBox Name="Unit3" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="2">
+                        <ComboBoxItem Content="Mins"/>
+                        <ComboBoxItem Content="Hours"/>
+                        <ComboBoxItem Content="Days"/>
+                    </ComboBox>
+                    <CheckBox Name="Ena3" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                </Grid>
+            </StackPanel>
+
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Name="CancelBtn" Grid.Column="0" Content="Cancel" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,0,4,0" Cursor="Hand"/>
+                <Button Name="SaveBtn" Grid.Column="1" Content="Save Alerts" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Margin="4,0,0,0" Cursor="Hand"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $cfgWin = [System.Windows.Markup.XamlReader]::Parse($configXaml)
+
+    $v1 = $cfgWin.FindName('Val1'); $u1 = $cfgWin.FindName('Unit1'); $e1 = $cfgWin.FindName('Ena1')
+    $v2 = $cfgWin.FindName('Val2'); $u2 = $cfgWin.FindName('Unit2'); $e2 = $cfgWin.FindName('Ena2')
+    $v3 = $cfgWin.FindName('Val3'); $u3 = $cfgWin.FindName('Unit3'); $e3 = $cfgWin.FindName('Ena3')
+    $saveBtn = $cfgWin.FindName('SaveBtn'); $cancelBtn = $cfgWin.FindName('CancelBtn')
+
+    if ($task.Alert1_Time) { $e1.IsChecked = $true }
+    if ($task.Alert2_Time) { $e2.IsChecked = $true }
+    if ($task.Alert3_Time) { $e3.IsChecked = $true }
+
+    $cancelBtn.Add_Click({ $cfgWin.Close() })
+
+    $saveBtn.Add_Click({
+        $eventDt = [DateTime]::Now
+        $str = "$($task.EventDate) $($task.Time)"
+        if ([DateTime]::TryParseExact($str, "dd-MM-yyyy HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$eventDt)) {
+            
+            $calcTarget = {
+                param($valBox, $unitBox, $chkBox)
+                if ($chkBox.IsChecked) {
+                    $num = 0
+                    [int]::TryParse($valBox.Text, [ref]$num) | Out-Null
+                    $unit = if ($unitBox.SelectedItem) { $unitBox.SelectedItem.Content.ToString() } else { "Mins" }
+                    $target = $eventDt
+                    if ($unit -eq "Mins") { $target = $eventDt.AddMinutes(-$num) }
+                    elseif ($unit -eq "Hours") { $target = $eventDt.AddHours(-$num) }
+                    elseif ($unit -eq "Days") { $target = $eventDt.AddDays(-$num) }
+                    return $target.ToString("dd-MM-yyyy HH:mm:ss")
+                }
+                return ""
+            }
+
+            $task.Alert1_Time = & $calcTarget $v1 $u1 $e1
+            $task.Alert1_Done = "FALSE"
+
+            $task.Alert2_Time = & $calcTarget $v2 $u2 $e2
+            $task.Alert2_Done = "FALSE"
+
+            $task.Alert3_Time = & $calcTarget $v3 $u3 $e3
+            $task.Alert3_Done = "FALSE"
+
+            Save-Data
+            Render-Cards
+        }
+        $cfgWin.Close()
+    })
+
+    $cfgWin.ShowDialog() | Out-Null
+}
+
+# Calendar Picker
+$calBtn.Add_Click({ $calPopup.IsOpen = $true })
+$calCtrl.Add_SelectedDatesChanged({
+    if ($calCtrl.SelectedDate) {
+        $dateInput.Text = $calCtrl.SelectedDate.ToString("dd-MM-yyyy")
+        $calPopup.IsOpen = $false
+    }
+})
+
+# Time Step Controls
+$timeStepModeBtn.Add_Click({
+    if ($global:timeStepMode -eq "1h") { $global:timeStepMode = "5m" } else { $global:timeStepMode = "1h" }
+    $timeStepModeBtn.Content = $global:timeStepMode
+})
+
+function Adjust-Time ($direction) {
+    $currentTime = [DateTime]::Now
+    [void][DateTime]::TryParseExact($timeInput.Text, "HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
+    
+    if ($global:timeStepMode -eq "1h") {
+        $currentTime = $currentTime.AddHours($direction)
+    } else {
+        $m = $currentTime.Minute
+        $rem = $m % 5
+        if ($direction -gt 0) {
+            $add = if ($rem -ne 0) { 5 - $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes($add)
+        } else {
+            $sub = if ($rem -ne 0) { $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes(-$sub)
+        }
+    }
+    $timeInput.Text = $currentTime.ToString("HH:mm")
+}
+
+$timeMinusBtn.Add_Click({ Adjust-Time -1 })
+$timePlusBtn.Add_Click({ Adjust-Time 1 })
+
+# Collapse / Expand Input Panel Action
+$collapseBtn.Add_Click({
+    if ($inputBorder.Visibility -eq [System.Windows.Visibility]::Visible) {
+        $inputBorder.Visibility = [System.Windows.Visibility]::Collapsed
+        $collapseBtn.Content = "🔽"
+    } else {
+        $inputBorder.Visibility = [System.Windows.Visibility]::Visible
+        $collapseBtn.Content = "🔼"
+    }
+})
+
+# Minimize Window Action
+$minBtn.Add_Click({
+    $window.WindowState = [System.Windows.WindowState]::Minimized
+})
+
+# Sort Chronologically Action
+$sortBtn.Add_Click({
+    $active = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+    $deleted = $global:tasks | Where-Object { $_.Deleted -eq "TRUE" -or $_.Deleted -eq "True" }
+
+    $sortedActive = $active | Sort-Object {
+        $dt = [DateTime]::MinValue
+        $str = "$($_.EventDate) $($_.Time)"
+        [DateTime]::TryParseExact($str, "dd-MM-yyyy HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dt) | Out-Null
+        $dt
+    }
+
+    $global:tasks.Clear()
+    foreach ($item in $sortedActive) { $global:tasks.Add($item) }
+    foreach ($item in $deleted) { $global:tasks.Add($item) }
+
+    Save-Data
+    Render-Cards
+})
+
+# Render Feed Cards with Multi-Tag Pills
+function Render-Cards {
+    $taskContainer.Children.Clear()
+    $p = Get-Palette
+    $bc = [System.Windows.Media.BrushConverter]::new()
+    
+    $activeTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+    
+    foreach ($item in $activeTasks) {
+        $card = New-Object System.Windows.Controls.Border
+        $card.CornerRadius = New-Object System.Windows.CornerRadius(12)
+        $card.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
+        $card.Padding = New-Object System.Windows.Thickness(12)
+        $card.AllowDrop = $true
+        $card.Tag = $item
+        $card.Cursor = [System.Windows.Input.Cursors]::SizeAll
+        
+        if ($item.Highlighted -eq "TRUE") {
+            $card.Background = $bc.ConvertFromString($p.HighlightBg)
+            $card.BorderBrush = $bc.ConvertFromString($p.HighlightBorder)
+            $card.BorderThickness = New-Object System.Windows.Thickness(1.5)
+        } else {
+            $card.Background = $bc.ConvertFromString($p.CardBg)
+            $card.BorderThickness = New-Object System.Windows.Thickness(0)
+        }
+
+        # Drag-and-Drop Handlers
+        $card.Add_PreviewMouseLeftButtonDown({
+            $global:dragStartPoint = $_.GetPosition($null)
+            $global:draggedTask = $this.Tag
+        })
+
+        $card.Add_MouseMove({
+            if ($_.LeftButton -eq [System.Windows.Input.MouseButtonState]::Pressed -and $global:draggedTask) {
+                $pos = $_.GetPosition($null)
+                if ([Math]::Abs($pos.X - $global:dragStartPoint.X) -gt 5 -or [Math]::Abs($pos.Y - $global:dragStartPoint.Y) -gt 5) {
+                    [System.Windows.DragDrop]::DoDragDrop($this, $this.Tag.Id, [System.Windows.DragDropEffects]::Move) | Out-Null
+                }
+            }
+        })
+
+        $card.Add_Drop({
+            $targetTask = $this.Tag
+            if ($global:draggedTask -and $targetTask -and ($global:draggedTask.Id -ne $targetTask.Id)) {
+                $oldIdx = $global:tasks.IndexOf($global:draggedTask)
+                $newIdx = $global:tasks.IndexOf($targetTask)
+                if ($oldIdx -ge 0 -and $newIdx -ge 0) {
+                    $global:tasks.RemoveAt($oldIdx)
+                    $global:tasks.Insert($newIdx, $global:draggedTask)
+                    Save-Data
+                    Render-Cards
+                }
+            }
+            $global:draggedTask = $null
+        })
+
+        # Master Card Grid
+        $grid = New-Object System.Windows.Controls.Grid
+        $colContent = New-Object System.Windows.Controls.ColumnDefinition
+        $colContent.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+        $colBtns = New-Object System.Windows.Controls.ColumnDefinition
+        $colBtns.Width = [System.Windows.GridLength]::Auto
+
+        $grid.ColumnDefinitions.Add($colContent)
+        $grid.ColumnDefinitions.Add($colBtns)
+
+        # Left Column: Information Stack
+        $contentStack = New-Object System.Windows.Controls.StackPanel
+        [System.Windows.Controls.Grid]::SetColumn($contentStack, 0)
+
+        # 1. Date & Time Header
+        $infoText = New-Object System.Windows.Controls.TextBlock
+        $infoText.Text = "⋮⋮ $($item.EventDate) $($item.Time)"
+        $infoText.Foreground = $bc.ConvertFromString($p.TextMuted)
+        $infoText.FontSize = 11
+        $infoText.Margin = New-Object System.Windows.Thickness(0, 0, 0, 3)
+        $contentStack.Children.Add($infoText) | Out-Null
+
+        # 2. Description
+        $descText = New-Object System.Windows.Controls.TextBlock
+        $descText.Text = $item.Description
+        $descText.Foreground = $bc.ConvertFromString($p.CardText)
+        $descText.FontSize = 14
+        $descText.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $descText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $contentStack.Children.Add($descText) | Out-Null
+
+        # 3. Location
+        if ($item.Location) {
+            $locText = New-Object System.Windows.Controls.TextBlock
+            $locText.Text = "📍 " + $item.Location
+            $locText.Foreground = $bc.ConvertFromString($p.TextMuted)
+            $locText.FontSize = 12
+            $locText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $locText.Margin = New-Object System.Windows.Thickness(0, 3, 0, 0)
+            $contentStack.Children.Add($locText) | Out-Null
+        }
+
+        # 4. Remarks
+        if ($item.Remarks) {
+            $remText = New-Object System.Windows.Controls.TextBlock
+            $remText.Text = "💬 " + $item.Remarks
+            $remText.Foreground = $bc.ConvertFromString($p.TextMuted)
+            $remText.FontSize = 12
+            $remText.FontStyle = [System.Windows.FontStyles]::Italic
+            $remText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $remText.Margin = New-Object System.Windows.Thickness(0, 3, 0, 0)
+            $contentStack.Children.Add($remText) | Out-Null
+        }
+
+        # 5. Tag Pills Panel
+        if ($item.Tags) {
+            $tagPanel = New-Object System.Windows.Controls.WrapPanel
+            $tagPanel.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
+
+            foreach ($tagId in $item.Tags.Split(';')) {
+                if ($tagId) {
+                    $matchedTag = $global:tags | Where-Object { $_.Id -eq $tagId }
+                    if ($matchedTag) {
+                        $pill = New-Object System.Windows.Controls.Border
+                        $pill.CornerRadius = New-Object System.Windows.CornerRadius(4)
+                        $pill.Padding = New-Object System.Windows.Thickness(5,1,5,1)
+                        $pill.Margin = New-Object System.Windows.Thickness(0,0,4,2)
+                        $pill.Background = $bc.ConvertFromString($matchedTag.ColorHex)
+
+                        $pillText = New-Object System.Windows.Controls.TextBlock
+                        $pillText.Text = $matchedTag.Name
+                        $pillText.Foreground = $bc.ConvertFromString("#11111B")
+                        $pillText.FontSize = 10
+                        $pillText.FontWeight = [System.Windows.FontWeights]::Bold
+
+                        $pill.Child = $pillText
+                        $tagPanel.Children.Add($pill) | Out-Null
+                    }
+                }
+            }
+            $contentStack.Children.Add($tagPanel) | Out-Null
+        }
+
+        # Right Column: Action Buttons Panel
+        $btnStack = New-Object System.Windows.Controls.StackPanel
+        $btnStack.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+        $btnStack.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
+        $btnStack.Margin = New-Object System.Windows.Thickness(8, 0, 0, 0)
+        [System.Windows.Controls.Grid]::SetColumn($btnStack, 1)
+
+        # Alert Button
+        $hasAlerts = $item.Alert1_Time -or $item.Alert2_Time -or $item.Alert3_Time
+        $alertBtn = New-Object System.Windows.Controls.Button
+        $alertBtn.Content = if ($hasAlerts) { "🔔" } else { "🔕" }
+        if ($hasAlerts) { $alertBtn.Foreground = $bc.ConvertFromString("#89B4FA") } else { $alertBtn.Foreground = $bc.ConvertFromString("#585B70") }
+        $alertBtn.Background = [System.Windows.Media.Brushes]::Transparent
+        $alertBtn.BorderThickness = 0
+        $alertBtn.FontSize = 12
+        $alertBtn.Margin = New-Object System.Windows.Thickness(0, 0, 4, 0)
+        $alertBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+        $alertBtn.Tag = $item
+        $alertBtn.Add_Click({ Open-AlertConfigurator $this.Tag })
+
+        # Edit Button
+        $editBtn = New-Object System.Windows.Controls.Button
+        $editBtn.Content = "✏️"
+        $editBtn.Foreground = $bc.ConvertFromString("#CDD6F4")
+        $editBtn.Background = [System.Windows.Media.Brushes]::Transparent
+        $editBtn.BorderThickness = 0
+        $editBtn.FontSize = 12
+        $editBtn.Margin = New-Object System.Windows.Thickness(0, 0, 4, 0)
+        $editBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+        $editBtn.Tag = $item
+        $editBtn.Add_Click({ Open-EditDialog $this.Tag })
+
+        # Highlight Button
+        $hlBtn = New-Object System.Windows.Controls.Button
+        $hlBtn.Content = if ($item.Highlighted -eq "TRUE") { "★" } else { "☆" }
+        $hlBtn.Foreground = $bc.ConvertFromString("#DF8E1D")
+        $hlBtn.Background = [System.Windows.Media.Brushes]::Transparent
+        $hlBtn.BorderThickness = 0
+        $hlBtn.FontSize = 14
+        $hlBtn.Margin = New-Object System.Windows.Thickness(0, 0, 4, 0)
+        $hlBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+        $hlBtn.Tag = $item
+        $hlBtn.Add_Click({
+            if ($this.Tag.Highlighted -eq "TRUE") { $this.Tag.Highlighted = "FALSE" } else { $this.Tag.Highlighted = "TRUE" }
+            Save-Data
+            Render-Cards
+        })
+
+        # Delete Button
+        $delBtn = New-Object System.Windows.Controls.Button
+        $delBtn.Content = "🗑"
+        $delBtn.Foreground = $bc.ConvertFromString("#E64553")
+        $delBtn.Background = [System.Windows.Media.Brushes]::Transparent
+        $delBtn.BorderThickness = 0
+        $delBtn.FontSize = 12
+        $delBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+        $delBtn.Tag = $item
+        $delBtn.Add_Click({
+            $this.Tag.Deleted = "TRUE"
+            Save-Data
+            Render-Cards
+        })
+
+        $btnStack.Children.Add($alertBtn) | Out-Null
+        $btnStack.Children.Add($editBtn) | Out-Null
+        $btnStack.Children.Add($hlBtn) | Out-Null
+        $btnStack.Children.Add($delBtn) | Out-Null
+
+        $grid.Children.Add($contentStack) | Out-Null
+        $grid.Children.Add($btnStack) | Out-Null
+
+        $card.Child = $grid
+        $taskContainer.Children.Add($card) | Out-Null
+    }
+}
+
+$themeBtn.Add_Click({
+    $global:isDarkMode = -not $global:isDarkMode
+    Apply-Theme
+})
+
+$headerGrid.Add_MouseDown({
+    if ($_.ChangedButton -eq [System.Windows.Input.MouseButton]::Left) { $window.DragMove() }
+})
+
+$pinBtn.Add_Click({
+    $window.Topmost = -not $window.Topmost
+    Update-PinStatus
+})
+
+$addEntry = {
+    if ($descInput.Text.Trim() -ne "") {
+        $newItem = [PSCustomObject]@{
+            InputDate   = (Get-Date -Format "dd-MM-yyyy HH:mm:ss")
+            EventDate   = if ($dateInput.Text) { $dateInput.Text } else { (Get-Date -Format "dd-MM-yyyy") }
+            Time        = if ($timeInput.Text) { $timeInput.Text } else { (Get-Date -Format "HH:mm") }
+            Description = $descInput.Text.Trim()
+            Location    = $locInput.Text.Trim()
+            Remarks     = $remInput.Text.Trim()
+            Deleted     = "FALSE"
+            Highlighted = "FALSE"
+            Id          = [Guid]::NewGuid().ToString()
+            Alert1_Time = ""
+            Alert1_Done = "FALSE"
+            Alert2_Time = ""
+            Alert2_Done = "FALSE"
+            Alert3_Time = ""
+            Alert3_Done = "FALSE"
+            Tags        = ($global:selectedTagIds -join ";")
+        }
+        $global:tasks.Insert(0, $newItem)
+        Save-Data
+        Render-Cards
+        Reset-Inputs
+    }
+}
+
+$addBtn.Add_Click($addEntry)
+
+$startupBtn.Add_Click({
+    if (Test-Path $startupShortcut) {
+        Remove-Item $startupShortcut -Force
+    } else {
+        $batPath = Join-Path $scriptDir "RunWidget.bat"
+        $wsh = New-Object -ComObject WScript.Shell
+        $sc = $wsh.CreateShortcut($startupShortcut)
+        $sc.TargetPath = $batPath
+        $sc.WorkingDirectory = $scriptDir
+        $sc.Save()
+    }
+    Update-StartupStatus
+})
+
+$closeBtn.Add_Click({ $window.Close() })
+
+# Background Alert Timer (15-second interval)
+$alertTimer = New-Object System.Windows.Threading.DispatcherTimer
+$alertTimer.Interval = [TimeSpan]::FromSeconds(15)
+$alertTimer.Add_Tick({ Check-Alerts })
+
+# Initialization Sequence
+Load-Tags
+Load-Data
+Reset-Inputs
+Apply-Theme
+Check-Alerts
+$alertTimer.Start()
+
+$window.ShowDialog() | Out-Null
