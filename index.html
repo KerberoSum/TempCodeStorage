@@ -236,7 +236,6 @@ $xaml = @'
                     <StackPanel Name="TaskContainer"/>
                 </ScrollViewer>
 
-                <!-- Enlarged Viewbox Scaled Calendar Container -->
                 <Border Name="CalendarViewContainer" Background="#181825" CornerRadius="12" Padding="8" Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -606,10 +605,12 @@ function Open-TagManager {
             
             <TextBlock Grid.Row="0" Text="🏷️ Tag Manager" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,12"/>
 
+            <!-- Tag List -->
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
                 <StackPanel Name="TMTagStack"/>
             </ScrollViewer>
 
+            <!-- New Tag Inputs & Color Palette -->
             <StackPanel Grid.Row="2" Margin="0,0,0,10">
                 <Grid Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
@@ -622,6 +623,7 @@ function Open-TagManager {
                     <Button Name="TMPickerBtn" Grid.Column="2" Content="🎨 Custom" Foreground="#CDD6F4" Background="#45475A" BorderThickness="0" FontSize="11" Padding="6,5" Cursor="Hand"/>
                 </Grid>
 
+                <!-- Color Swatches Grid -->
                 <WrapPanel Name="TMSwatchPanel" HorizontalAlignment="Center" Margin="0,2,0,6"/>
 
                 <Button Name="TMAddBtn" Content="+ Add New Tag" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Cursor="Hand"/>
@@ -736,7 +738,7 @@ function Open-RoutineGenerator {
     $rgXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Batch &amp; Routine Generator" Height="520" Width="400" WindowStyle="None" 
+        Title="Batch &amp; Routine Generator" Height="550" Width="400" WindowStyle="None" 
         AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
     <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
         <Grid Margin="16">
@@ -757,10 +759,20 @@ function Open-RoutineGenerator {
                     <TextBox Name="RGLoc" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
 
                     <TextBlock Text="Time (HH:mm):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
-                    <TextBox Name="RGTime" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,8"/>
+                    <TextBox Name="RGTime" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
+
+                    <!-- Tags Selector in Routine Generator -->
+                    <TextBlock Text="Tags:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <Button Name="RGSelectTagsBtn" Content="🏷️ Select Tags (0)" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Margin="0,0,0,8" Cursor="Hand" HorizontalAlignment="Left"/>
+                    <Popup Name="RGTagPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=RGSelectTagsBtn}" Placement="Bottom">
+                        <Border Background="#1E1E2E" BorderBrush="#45475A" BorderThickness="1" CornerRadius="8" Padding="8" MaxHeight="140">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Name="RGTagCheckboxContainer"/>
+                            </ScrollViewer>
+                        </Border>
+                    </Popup>
 
                     <TextBlock Text="Generation Mode:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
-                    
                     <ComboBox Name="RGModeCombo" Foreground="#CDD6F4" Background="#313244" Margin="0,0,0,8" SelectedIndex="0">
                         <ComboBoxItem Content="Multi-Select Dates Calendar (Click to toggle)" Background="#313244" Foreground="#CDD6F4"/>
                         <ComboBoxItem Content="Weekly Routine (e.g. Every Mon/Wed)" Background="#313244" Foreground="#CDD6F4"/>
@@ -799,23 +811,52 @@ function Open-RoutineGenerator {
 '@
     $rgWin = [System.Windows.Markup.XamlReader]::Parse($rgXaml)
 
-    $rgDesc      = $rgWin.FindName('RGDesc')
-    $rgLoc       = $rgWin.FindName('RGLoc')
-    $rgTime      = $rgWin.FindName('RGTime')
-    $rgCombo     = $rgWin.FindName('RGModeCombo')
-    $rgMultiPan  = $rgWin.FindName('RGMultiDatePanel')
-    $rgMultiCal  = $rgWin.FindName('RGMultiCal')
-    $rgRoutPan   = $rgWin.FindName('RGRoutinePanel')
-    $rgStart     = $rgWin.FindName('RGStart')
-    $rgEnd       = $rgWin.FindName('RGEnd')
-    $rgRuleHint  = $rgWin.FindName('RGRuleHint')
-    $rgRuleVal   = $rgWin.FindName('RGRuleVal')
-    $rgGenBtn    = $rgWin.FindName('RGGenBtn')
-    $rgCancelBtn = $rgWin.FindName('RGCancelBtn')
+    $rgDesc       = $rgWin.FindName('RGDesc')
+    $rgLoc        = $rgWin.FindName('RGLoc')
+    $rgTime       = $rgWin.FindName('RGTime')
+    $rgCombo      = $rgWin.FindName('RGModeCombo')
+    $rgMultiPan   = $rgWin.FindName('RGMultiDatePanel')
+    $rgMultiCal   = $rgWin.FindName('RGMultiCal')
+    $rgRoutPan    = $rgWin.FindName('RGRoutinePanel')
+    $rgStart      = $rgWin.FindName('RGStart')
+    $rgEnd        = $rgWin.FindName('RGEnd')
+    $rgRuleHint   = $rgWin.FindName('RGRuleHint')
+    $rgRuleVal    = $rgWin.FindName('RGRuleVal')
+    $rgGenBtn     = $rgWin.FindName('RGGenBtn')
+    $rgCancelBtn  = $rgWin.FindName('RGCancelBtn')
+    $rgSelectTagsBtn = $rgWin.FindName('RGSelectTagsBtn')
+    $rgTagPopup      = $rgWin.FindName('RGTagPopup')
+    $rgTagCheckboxContainer = $rgWin.FindName('RGTagCheckboxContainer')
 
     $rgTime.Text  = (Get-Date -Format "HH:mm")
     $rgStart.Text = (Get-Date -Format "dd-MM-yyyy")
     $rgEnd.Text   = (Get-Date).AddMonths(3).ToString("dd-MM-yyyy")
+
+    $script:rgSelectedTagIds = [System.Collections.Generic.List[string]]::new()
+
+    $rgSelectTagsBtn.Add_Click({
+        $rgTagCheckboxContainer.Children.Clear()
+        $bc = [System.Windows.Media.BrushConverter]::new()
+        foreach ($t in $global:tags) {
+            $cb = New-Object System.Windows.Controls.CheckBox
+            $cb.Content = $t.Name
+            $cb.Foreground = $bc.ConvertFromString($t.ColorHex)
+            $cb.Margin = New-Object System.Windows.Thickness(2)
+            $cb.Tag = $t.Id
+            if ($script:rgSelectedTagIds.Contains($t.Id)) { $cb.IsChecked = $true }
+
+            $cb.Add_Click({
+                if ($this.IsChecked) {
+                    if (-not $script:rgSelectedTagIds.Contains($this.Tag)) { $script:rgSelectedTagIds.Add($this.Tag) }
+                } else {
+                    $script:rgSelectedTagIds.Remove($this.Tag) | Out-Null
+                }
+                $rgSelectTagsBtn.Content = "🏷️ Select Tags (" + $script:rgSelectedTagIds.Count + ")"
+            })
+            $rgTagCheckboxContainer.Children.Add($cb) | Out-Null
+        }
+        $rgTagPopup.IsOpen = $true
+    })
 
     $script:rgSelectedDates = [System.Collections.Generic.List[DateTime]]::new()
     $script:suppressCalEvent = $false
@@ -909,7 +950,7 @@ function Open-RoutineGenerator {
                     Alert2_Done = "FALSE"
                     Alert3_Time = ""
                     Alert3_Done = "FALSE"
-                    Tags        = ($global:selectedTagIds -join ";")
+                    Tags        = ($script:rgSelectedTagIds -join ";")
                 }
                 $global:tasks.Insert(0, $newItem)
             }
