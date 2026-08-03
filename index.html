@@ -1,4 +1,4 @@
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
 # Ensure paths resolve to the script's exact directory
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -89,7 +89,6 @@ $xaml = @'
                         <TextBlock Name="RemLabel" Grid.Row="2" Grid.Column="0" Text="Remarks:" Foreground="#CDD6F4" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,4,6"/>
                         <TextBox Name="RemInput" Grid.Row="2" Grid.Column="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="13" Padding="8,6" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
 
-                        <!-- Tag Selector Button -->
                         <TextBlock Name="TagsLabel" Grid.Row="3" Grid.Column="0" Text="Tags:" Foreground="#CDD6F4" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,4,0"/>
                         <Button Name="SelectTagsBtn" Grid.Row="3" Grid.Column="1" Content="🏷️ Select Tags (0)" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="12" Padding="8,5" Cursor="Hand" HorizontalAlignment="Left"/>
                         <Popup Name="TagPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=SelectTagsBtn}" Placement="Bottom">
@@ -231,20 +230,23 @@ $xaml = @'
                 </Button>
             </DockPanel>
 
-            <!-- Lower Container: List Feed vs Calendar View -->
+            <!-- Lower Container -->
             <Grid Grid.Row="3" Margin="0,0,0,8">
                 <ScrollViewer Name="FeedScrollViewer" VerticalScrollBarVisibility="Auto">
                     <StackPanel Name="TaskContainer"/>
                 </ScrollViewer>
 
+                <!-- Enlarged Viewbox Scaled Calendar Container -->
                 <Border Name="CalendarViewContainer" Background="#181825" CornerRadius="12" Padding="8" Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Text="Click any date to view / edit events" Foreground="#7F849C" FontSize="11" HorizontalAlignment="Center" Margin="0,0,0,6"/>
-                        <Calendar Name="MainViewCalendar" Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                        <TextBlock Text="Click blue highlighted dates to view events" Foreground="#7F849C" FontSize="11" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                        <Viewbox Grid.Row="1" Stretch="Uniform" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                            <Calendar Name="MainViewCalendar" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Viewbox>
                     </Grid>
                 </Border>
             </Grid>
@@ -321,6 +323,7 @@ $global:timeStepMode = "1h"
 $global:isCalendarView = $false
 $global:draggedTask = $null
 $global:dragStartPoint = [System.Windows.Point]::new(0, 0)
+$script:suppressMainCal = $false
 
 function Get-Palette {
     if ($global:isDarkMode) {
@@ -342,6 +345,51 @@ function Get-Palette {
             SuccessBg = "#2E7D32"; SuccessText = "#FFFFFF"
         }
     }
+}
+
+# Helper to find WPF Visual Tree elements
+function Get-VisualChildren ($parent, $type) {
+    $children = [System.Collections.Generic.List[System.Windows.Media.Visual]]::new()
+    if ($parent -is [System.Windows.Media.Visual]) {
+        $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($parent)
+        for ($i = 0; $i -lt $count; $i++) {
+            $child = [System.Windows.Media.VisualTreeHelper]::GetChild($parent, $i)
+            if ($child -is $type) {
+                $children.Add($child)
+            }
+            $children.AddRange((Get-VisualChildren $child $type))
+        }
+    }
+    return $children
+}
+
+# Calendar Event Date Highlighting Engine
+function Highlight-CalendarDates {
+    if (-not $global:isCalendarView) { return }
+    
+    $window.Dispatcher.BeginInvoke([Action]{
+        $dayButtons = Get-VisualChildren $mainViewCalendar ([System.Windows.Controls.Primitives.CalendarDayButton])
+        $activeTasks = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+        $eventDates = $activeTasks | ForEach-Object { $_.EventDate } | Select-Object -Unique
+
+        $bc = [System.Windows.Media.BrushConverter]::new()
+        $p = Get-Palette
+
+        foreach ($btn in $dayButtons) {
+            if ($btn.DataContext -is [DateTime]) {
+                $dStr = $btn.DataContext.ToString("dd-MM-yyyy")
+                if ($eventDates -contains $dStr) {
+                    $btn.Background = $bc.ConvertFromString("#89B4FA")
+                    $btn.Foreground = $bc.ConvertFromString("#11111B")
+                    $btn.FontWeight = [System.Windows.FontWeights]::Bold
+                } else {
+                    $btn.Background = [System.Windows.Media.Brushes]::Transparent
+                    $btn.Foreground = $bc.ConvertFromString($p.TextPrimary)
+                    $btn.FontWeight = [System.Windows.FontWeights]::Normal
+                }
+            }
+        }
+    }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
 }
 
 function Update-PinStatus {
@@ -437,6 +485,7 @@ function Apply-Theme {
     Update-PinStatus
     Update-StartupStatus
     Render-Cards
+    Highlight-CalendarDates
 }
 
 # Tag CSV Handler
@@ -491,6 +540,7 @@ function Load-Data {
 function Save-Data {
     try {
         $global:tasks | Export-Csv -Path $filePath -NoTypeInformation -Encoding utf8 -ErrorAction Stop
+        Highlight-CalendarDates
     } catch {
         [System.Windows.MessageBox]::Show("Warning: Could not save to 'Widget_Data.csv'. Please close Excel if open.", "File Lock Error")
     }
@@ -538,12 +588,12 @@ $selectTagsBtn.Add_Click({
     $tagPopup.IsOpen = $true
 })
 
-# Tag Manager Dialog
+# Tag Manager Dialog with Color Swatches & Picker
 function Open-TagManager {
     $tmXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Tag Manager" Height="400" Width="360" WindowStyle="None" 
+        Title="Tag Manager" Height="440" Width="380" WindowStyle="None" 
         AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
     <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
         <Grid Margin="16">
@@ -556,22 +606,26 @@ function Open-TagManager {
             
             <TextBlock Grid.Row="0" Text="🏷️ Tag Manager" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,12"/>
 
-            <!-- Tag List -->
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
                 <StackPanel Name="TMTagStack"/>
             </ScrollViewer>
 
-            <!-- New Tag Inputs -->
-            <Grid Grid.Row="2" Margin="0,0,0,10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="80"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBox Name="TMNewName" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,4,0"/>
-                <TextBox Name="TMNewColor" Grid.Column="1" Text="#89B4FA" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,4,0"/>
-                <Button Name="TMAddBtn" Grid.Column="2" Content="+ Add" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="8,5" Cursor="Hand"/>
-            </Grid>
+            <StackPanel Grid.Row="2" Margin="0,0,0,10">
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="90"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Name="TMNewName" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,4,0"/>
+                    <TextBox Name="TMNewColor" Grid.Column="1" Text="#89B4FA" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,4,0"/>
+                    <Button Name="TMPickerBtn" Grid.Column="2" Content="🎨 Custom" Foreground="#CDD6F4" Background="#45475A" BorderThickness="0" FontSize="11" Padding="6,5" Cursor="Hand"/>
+                </Grid>
+
+                <WrapPanel Name="TMSwatchPanel" HorizontalAlignment="Center" Margin="0,2,0,6"/>
+
+                <Button Name="TMAddBtn" Content="+ Add New Tag" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Cursor="Hand"/>
+            </StackPanel>
 
             <Button Name="TMCloseBtn" Grid.Row="3" Content="Done / Close" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Cursor="Hand"/>
         </Grid>
@@ -579,15 +633,41 @@ function Open-TagManager {
 </Window>
 '@
     $tmWin = [System.Windows.Markup.XamlReader]::Parse($tmXaml)
-    $tmStack    = $tmWin.FindName('TMTagStack')
-    $tmName     = $tmWin.FindName('TMNewName')
-    $tmColor    = $tmWin.FindName('TMNewColor')
-    $tmAddBtn   = $tmWin.FindName('TMAddBtn')
-    $tmCloseBtn = $tmWin.FindName('TMCloseBtn')
+    $tmStack       = $tmWin.FindName('TMTagStack')
+    $tmName        = $tmWin.FindName('TMNewName')
+    $tmColor       = $tmWin.FindName('TMNewColor')
+    $tmPickerBtn   = $tmWin.FindName('TMPickerBtn')
+    $tmSwatchPanel = $tmWin.FindName('TMSwatchPanel')
+    $tmAddBtn      = $tmWin.FindName('TMAddBtn')
+    $tmCloseBtn    = $tmWin.FindName('TMCloseBtn')
+
+    $colorPresets = @("#89B4FA", "#A6E3A1", "#F38BA8", "#F9E2AF", "#CBA6F7", "#FAB387", "#94E2D5", "#F5C2E7", "#B4BEFE", "#A6ADC8")
+    $bc = [System.Windows.Media.BrushConverter]::new()
+
+    foreach ($hex in $colorPresets) {
+        $btn = New-Object System.Windows.Controls.Button
+        $btn.Width = 22; $btn.Height = 22
+        $btn.Margin = New-Object System.Windows.Thickness(3)
+        $btn.Background = $bc.ConvertFromString($hex)
+        $btn.BorderThickness = 0
+        $btn.Cursor = [System.Windows.Input.Cursors]::Hand
+        $btn.Tag = $hex
+        $btn.Add_Click({
+            $tmColor.Text = $this.Tag
+        })
+        $tmSwatchPanel.Children.Add($btn) | Out-Null
+    }
+
+    $tmPickerBtn.Add_Click({
+        $cd = New-Object System.Windows.Forms.ColorDialog
+        if ($cd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $hex = "#" + $cd.Color.R.ToString("X2") + $cd.Color.G.ToString("X2") + $cd.Color.B.ToString("X2")
+            $tmColor.Text = $hex
+        }
+    })
 
     $renderTMList = {
         $tmStack.Children.Clear()
-        $bc = [System.Windows.Media.BrushConverter]::new()
 
         foreach ($t in $global:tags) {
             $row = New-Object System.Windows.Controls.DockPanel
@@ -679,21 +759,19 @@ function Open-RoutineGenerator {
                     <TextBlock Text="Time (HH:mm):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                     <TextBox Name="RGTime" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,8"/>
 
-                    <!-- Mode Selector -->
                     <TextBlock Text="Generation Mode:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    
                     <ComboBox Name="RGModeCombo" Foreground="#CDD6F4" Background="#313244" Margin="0,0,0,8" SelectedIndex="0">
-                        <ComboBoxItem Content="Multi-Select Dates Calendar"/>
-                        <ComboBoxItem Content="Weekly Routine (e.g. Every Mon/Wed)"/>
-                        <ComboBoxItem Content="Monthly Routine (e.g. Every 15th)"/>
+                        <ComboBoxItem Content="Multi-Select Dates Calendar (Click to toggle)" Background="#313244" Foreground="#CDD6F4"/>
+                        <ComboBoxItem Content="Weekly Routine (e.g. Every Mon/Wed)" Background="#313244" Foreground="#CDD6F4"/>
+                        <ComboBoxItem Content="Monthly Routine (e.g. Every 15th)" Background="#313244" Foreground="#CDD6F4"/>
                     </ComboBox>
 
-                    <!-- Multi-Date Panel -->
                     <StackPanel Name="RGMultiDatePanel" Margin="0,0,0,8">
-                        <TextBlock Text="Select Multiple Dates below:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                        <TextBlock Text="Click dates to select / unselect:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                         <Calendar Name="RGMultiCal" SelectionMode="MultipleRange" HorizontalAlignment="Center"/>
                     </StackPanel>
 
-                    <!-- Routine Panel -->
                     <StackPanel Name="RGRoutinePanel" Visibility="Collapsed" Margin="0,0,0,8">
                         <TextBlock Text="Start Date (dd-MM-yyyy):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                         <TextBox Name="RGStart" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6"/>
@@ -739,6 +817,32 @@ function Open-RoutineGenerator {
     $rgStart.Text = (Get-Date -Format "dd-MM-yyyy")
     $rgEnd.Text   = (Get-Date).AddMonths(3).ToString("dd-MM-yyyy")
 
+    $script:rgSelectedDates = [System.Collections.Generic.List[DateTime]]::new()
+    $script:suppressCalEvent = $false
+
+    $rgMultiCal.Add_SelectedDatesChanged({
+        if ($script:suppressCalEvent) { return }
+        $script:suppressCalEvent = $true
+
+        $clicked = $rgMultiCal.SelectedDate
+        if ($clicked) {
+            $dateOnly = $clicked.Value.Date
+            $existing = $script:rgSelectedDates | Where-Object { $_.Date -eq $dateOnly }
+            if ($existing) {
+                $script:rgSelectedDates.Remove($existing) | Out-Null
+            } else {
+                $script:rgSelectedDates.Add($dateOnly)
+            }
+
+            $rgMultiCal.SelectedDates.Clear()
+            foreach ($d in $script:rgSelectedDates) {
+                $rgMultiCal.SelectedDates.Add($d)
+            }
+        }
+
+        $script:suppressCalEvent = $false
+    })
+
     $rgCombo.Add_SelectionChanged({
         if ($rgCombo.SelectedIndex -eq 0) {
             $rgMultiPan.Visibility = [System.Windows.Visibility]::Visible
@@ -763,7 +867,7 @@ function Open-RoutineGenerator {
             $targetDates = [System.Collections.Generic.List[DateTime]]::new()
 
             if ($rgCombo.SelectedIndex -eq 0) {
-                foreach ($d in $rgMultiCal.SelectedDates) {
+                foreach ($d in $script:rgSelectedDates) {
                     $targetDates.Add($d)
                 }
             } else {
@@ -778,12 +882,10 @@ function Open-RoutineGenerator {
 
                 while ($curr -le $dtEnd) {
                     if ($rgCombo.SelectedIndex -eq 1) {
-                        # Weekly
                         $dayOfWeek = [int]$curr.DayOfWeek
-                        if ($dayOfWeek -eq 0) { $dayOfWeek = 7 } # Sunday = 7
+                        if ($dayOfWeek -eq 0) { $dayOfWeek = 7 }
                         if ($dayOfWeek -eq $ruleNum) { $targetDates.Add($curr) }
                     } else {
-                        # Monthly
                         if ($curr.Day -eq $ruleNum) { $targetDates.Add($curr) }
                     }
                     $curr = $curr.AddDays(1)
@@ -823,7 +925,7 @@ function Open-RoutineGenerator {
 
 $batchGenBtn.Add_Click({ Open-RoutineGenerator })
 
-# Day Overview Window (When clicking date in Calendar View)
+# Day Overview Window
 function Open-DayOverview ($dateStr) {
     $doXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -871,7 +973,6 @@ function Open-DayOverview ($dateStr) {
             $doStack.Children.Add($emptyText) | Out-Null
         } else {
             foreach ($item in $dayTasks) {
-                # Create Card similar to main feed
                 $card = New-Object System.Windows.Controls.Border
                 $card.CornerRadius = New-Object System.Windows.CornerRadius(10)
                 $card.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
@@ -898,10 +999,19 @@ function Open-DayOverview ($dateStr) {
 }
 
 $mainViewCalendar.Add_SelectedDatesChanged({
+    if ($script:suppressMainCal) { return }
     if ($mainViewCalendar.SelectedDate) {
         $selectedStr = $mainViewCalendar.SelectedDate.ToString("dd-MM-yyyy")
+        $script:suppressMainCal = $true
         Open-DayOverview $selectedStr
+        $mainViewCalendar.SelectedDate = $null
+        $script:suppressMainCal = $false
+        Highlight-CalendarDates
     }
+})
+
+$mainViewCalendar.Add_DisplayDateChanged({
+    Highlight-CalendarDates
 })
 
 $viewToggleBtn.Add_Click({
@@ -910,6 +1020,7 @@ $viewToggleBtn.Add_Click({
         $feedScrollViewer.Visibility = [System.Windows.Visibility]::Collapsed
         $calendarViewContainer.Visibility = [System.Windows.Visibility]::Visible
         $viewToggleBtn.Content = "📋 Feed View"
+        Highlight-CalendarDates
     } else {
         $feedScrollViewer.Visibility = [System.Windows.Visibility]::Visible
         $calendarViewContainer.Visibility = [System.Windows.Visibility]::Collapsed
@@ -944,7 +1055,6 @@ function Open-EditDialog ($task) {
                 <TextBlock Text="Remarks:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                 <TextBox Name="ERem" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
 
-                <!-- Tags Section in Edit Dialog -->
                 <TextBlock Text="Tags:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
                 <Button Name="ESelectTagsBtn" Content="🏷️ Select Tags" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontSize="11" Padding="6,4" Margin="0,0,0,8" Cursor="Hand" HorizontalAlignment="Left"/>
                 <Popup Name="ETagPopup" StaysOpen="False" PlacementTarget="{Binding ElementName=ESelectTagsBtn}" Placement="Bottom">
