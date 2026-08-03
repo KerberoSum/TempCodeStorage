@@ -829,7 +829,104 @@ $selectTagsBtn.Add_Click({
     $tagPopup.IsOpen = $true
 })
 
-# Tag Manager Dialog with Color Swatches & Picker
+# Sub-Dialog to Edit Individual Tag
+function Open-EditTagDialog ($tag) {
+    $etXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit Tag" Height="280" Width="340" WindowStyle="None" 
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            
+            <TextBlock Grid.Row="0" Text="✏️ Edit Tag" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+
+            <StackPanel Grid.Row="1">
+                <TextBlock Text="Tag Name:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <TextBox Name="ETName" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,8"/>
+
+                <TextBlock Text="Color (Hex):" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Name="ETColor" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,4,0"/>
+                    <Button Name="ETPickerBtn" Grid.Column="1" Content="🎨 Custom" Foreground="#CDD6F4" Background="#45475A" BorderThickness="0" FontSize="11" Padding="6,5" Cursor="Hand"/>
+                </Grid>
+
+                <WrapPanel Name="ETSwatchPanel" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+            </StackPanel>
+
+            <Grid Grid.Row="2" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Name="ETCancelBtn" Grid.Column="0" Content="Cancel" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,0,4,0" Cursor="Hand"/>
+                <Button Name="ETSaveBtn" Grid.Column="1" Content="Save Changes" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Margin="4,0,0,0" Cursor="Hand"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+'@
+    $etWin = [System.Windows.Markup.XamlReader]::Parse($etXaml)
+
+    $etName        = $etWin.FindName('ETName')
+    $etColor       = $etWin.FindName('ETColor')
+    $etPickerBtn   = $etWin.FindName('ETPickerBtn')
+    $etSwatchPanel = $etWin.FindName('ETSwatchPanel')
+    $etSaveBtn     = $etWin.FindName('ETSaveBtn')
+    $etCancelBtn   = $etWin.FindName('ETCancelBtn')
+
+    $etName.Text  = $tag.Name
+    $etColor.Text = $tag.ColorHex
+
+    $colorPresets = @("#89B4FA", "#A6E3A1", "#F38BA8", "#F9E2AF", "#CBA6F7", "#FAB387", "#94E2D5", "#F5C2E7", "#B4BEFE", "#A6ADC8")
+    $bc = [System.Windows.Media.BrushConverter]::new()
+
+    foreach ($hex in $colorPresets) {
+        $btn = New-Object System.Windows.Controls.Button
+        $btn.Width = 20; $btn.Height = 20
+        $btn.Margin = New-Object System.Windows.Thickness(3)
+        $btn.Background = $bc.ConvertFromString($hex)
+        $btn.BorderThickness = 0
+        $btn.Cursor = [System.Windows.Input.Cursors]::Hand
+        $btn.Tag = $hex
+        $btn.Add_Click({ $etColor.Text = $this.Tag })
+        $etSwatchPanel.Children.Add($btn) | Out-Null
+    }
+
+    $etPickerBtn.Add_Click({
+        $cd = New-Object System.Windows.Forms.ColorDialog
+        if ($cd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $hex = "#" + $cd.Color.R.ToString("X2") + $cd.Color.G.ToString("X2") + $cd.Color.B.ToString("X2")
+            $etColor.Text = $hex
+        }
+    })
+
+    $etCancelBtn.Add_Click({ $etWin.Close() })
+
+    $etSaveBtn.Add_Click({
+        if ($etName.Text.Trim() -ne "") {
+            $tag.Name = $etName.Text.Trim()
+            if ($etColor.Text.Trim()) { $tag.ColorHex = $etColor.Text.Trim() }
+            Save-Tags
+            Render-Cards
+            Render-CustomCalendar
+        }
+        $etWin.Close()
+    })
+
+    $etWin.ShowDialog() | Out-Null
+}
+
+# Tag Manager Dialog
 function Open-TagManager {
     $tmXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -916,6 +1013,7 @@ function Open-TagManager {
             $row = New-Object System.Windows.Controls.DockPanel
             $row.Margin = New-Object System.Windows.Thickness(0,0,0,6)
 
+            # Delete Button with Automatic Task Purge
             $delBtn = New-Object System.Windows.Controls.Button
             $delBtn.Content = "🗑"
             $delBtn.Foreground = $bc.ConvertFromString("#E64553")
@@ -925,10 +1023,41 @@ function Open-TagManager {
             $delBtn.Tag = $t
             [System.Windows.Controls.DockPanel]::SetDock($delBtn, [System.Windows.Controls.Dock]::Right)
             $delBtn.Add_Click({
+                $deletedTagId = $this.Tag.Id
                 $global:tags.Remove($this.Tag) | Out-Null
                 Save-Tags
+
+                # Purge deleted tag ID from all tasks
+                foreach ($tsk in $global:tasks) {
+                    if ($tsk.Tags) {
+                        $validIds = @($tsk.Tags.Split(';') | Where-Object { $_ -and $_ -ne $deletedTagId })
+                        $tsk.Tags = ($validIds -join ';')
+                    }
+                }
+                Save-Data
+
+                # Clean main input selection if selected
+                $global:selectedTagIds.Remove($deletedTagId) | Out-Null
+                $selectTagsBtn.Content = "🏷️ Select Tags (" + $global:selectedTagIds.Count + ")"
+
                 & $renderTMList
                 Render-Cards
+                Render-CustomCalendar
+            })
+
+            # Edit Button
+            $editBtn = New-Object System.Windows.Controls.Button
+            $editBtn.Content = "✏️"
+            $editBtn.Foreground = $bc.ConvertFromString("#CDD6F4")
+            $editBtn.Background = [System.Windows.Media.Brushes]::Transparent
+            $editBtn.BorderThickness = 0
+            $editBtn.Margin = New-Object System.Windows.Thickness(0,0,4,0)
+            $editBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+            $editBtn.Tag = $t
+            [System.Windows.Controls.DockPanel]::SetDock($editBtn, [System.Windows.Controls.Dock]::Right)
+            $editBtn.Add_Click({
+                Open-EditTagDialog $this.Tag
+                & $renderTMList
             })
 
             $pill = New-Object System.Windows.Controls.Border
@@ -945,6 +1074,7 @@ function Open-TagManager {
             $pill.Child = $txt
 
             $row.Children.Add($delBtn) | Out-Null
+            $row.Children.Add($editBtn) | Out-Null
             $row.Children.Add($pill) | Out-Null
             $tmStack.Children.Add($row) | Out-Null
         }
@@ -1132,18 +1262,15 @@ function Open-RoutineGenerator {
                 [DateTime]::TryParseExact($rgStart.Text, "dd-MM-yyyy", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dtStart) | Out-Null
                 [DateTime]::TryParseExact($rgEnd.Text, "dd-MM-yyyy", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dtEnd) | Out-Null
 
-                # Parse multiple numbers (comma/space separated)
                 $ruleNums = @($rgRuleVal.Text -split '[,;\s]+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
 
                 $curr = $dtStart
                 while ($curr -le $dtEnd) {
                     if ($rgCombo.SelectedIndex -eq 1) {
-                        # Weekly multi-day check
                         $dayOfWeek = [int]$curr.DayOfWeek
                         if ($dayOfWeek -eq 0) { $dayOfWeek = 7 }
                         if ($ruleNums -contains $dayOfWeek) { $targetDates.Add($curr) }
                     } else {
-                        # Monthly multi-day check
                         if ($ruleNums -contains $curr.Day) { $targetDates.Add($curr) }
                     }
                     $curr = $curr.AddDays(1)
@@ -1344,7 +1471,7 @@ $viewToggleBtn.Add_Click({
     }
 })
 
-# Edit Entry Dialog
+# Edit Entry Dialog (With Active Tag Validation)
 function Open-EditDialog ($task) {
     $editXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1456,7 +1583,10 @@ function Open-EditDialog ($task) {
     $script:eSelectedTagIds = [System.Collections.Generic.List[string]]::new()
     if ($task.Tags) {
         foreach ($id in $task.Tags.Split(';')) {
-            if ($id) { $script:eSelectedTagIds.Add($id) }
+            # Filter out deleted/orphaned tags
+            if ($id -and ($global:tags | Where-Object { $_.Id -eq $id })) {
+                $script:eSelectedTagIds.Add($id)
+            }
         }
     }
 
