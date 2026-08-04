@@ -197,9 +197,9 @@ $xaml = @'
                 </StackPanel>
             </Border>
 
-            <!-- Control Toolbar -->
-            <DockPanel Grid.Row="2" Margin="0,0,0,8">
-                <Button Name="SortBtn" Content="⏳ Sort" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,0" Cursor="Hand" DockPanel.Dock="Left">
+            <!-- Auto-Wrapping Control Toolbar -->
+            <WrapPanel Grid.Row="2" Margin="0,0,0,4">
+                <Button Name="SortBtn" Content="⏳ Sort" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,4" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
@@ -209,7 +209,7 @@ $xaml = @'
                     </Button.Template>
                 </Button>
 
-                <Button Name="FilterBtn" Content="🔍 Filter" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,0" Cursor="Hand" DockPanel.Dock="Left">
+                <Button Name="FilterBtn" Content="🔍 Filter" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,4" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
@@ -219,7 +219,7 @@ $xaml = @'
                     </Button.Template>
                 </Button>
 
-                <Button Name="ViewToggleBtn" Content="📅 Calendar View" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,0" Cursor="Hand" DockPanel.Dock="Left">
+                <Button Name="ViewToggleBtn" Content="📅 Calendar View" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,4" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
@@ -229,7 +229,7 @@ $xaml = @'
                     </Button.Template>
                 </Button>
 
-                <Button Name="ManageTagsBtn" Content="🏷️ Manage Tags" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Cursor="Hand" DockPanel.Dock="Left">
+                <Button Name="ManageTagsBtn" Content="🏷️ Manage Tags" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,0,4" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
@@ -238,7 +238,7 @@ $xaml = @'
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
-            </DockPanel>
+            </WrapPanel>
 
             <!-- Lower Container -->
             <Grid Grid.Row="3" Margin="0,0,0,8">
@@ -379,6 +379,9 @@ $global:tasks = [System.Collections.Generic.List[PSObject]]::new()
 $global:tags  = [System.Collections.Generic.List[PSObject]]::new()
 $global:selectedTagIds = [System.Collections.Generic.List[string]]::new()
 $global:filterTagIds   = [System.Collections.Generic.List[string]]::new()
+$global:filterDesc = ""
+$global:filterLoc  = ""
+$global:filterRem  = ""
 $global:isDarkMode = $true
 $global:timeStepMode = "1h"
 $global:isCalendarView = $false
@@ -408,28 +411,60 @@ function Get-Palette {
     }
 }
 
-# Task Filtering Helper
+# Task Filtering Helper (Supports Tags + Keyword Search across Description, Location, and Remarks)
 function Get-FilteredTasks {
     $active = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
-    if ($global:filterTagIds.Count -eq 0) {
-        return $active
-    }
+    
     return $active | Where-Object {
-        if (-not $_.Tags) { return $false }
-        $itemTagIds = $_.Tags.Split(';')
-        $match = $false
-        foreach ($ft in $global:filterTagIds) {
-            if ($itemTagIds -contains $ft) { $match = $true; break }
+        $item = $_
+        
+        # 1. Tag Filter
+        if ($global:filterTagIds.Count -gt 0) {
+            if (-not $item.Tags) { return $false }
+            $itemTagIds = $item.Tags.Split(';')
+            $tagMatch = $false
+            foreach ($ft in $global:filterTagIds) {
+                if ($itemTagIds -contains $ft) { $tagMatch = $true; break }
+            }
+            if (-not $tagMatch) { return $false }
         }
-        $match
+
+        # 2. Description Keyword Search
+        if ($global:filterDesc -and $global:filterDesc.Trim() -ne "") {
+            if (-not $item.Description -or ($item.Description.IndexOf($global:filterDesc.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+                return $false
+            }
+        }
+
+        # 3. Location Keyword Search
+        if ($global:filterLoc -and $global:filterLoc.Trim() -ne "") {
+            if (-not $item.Location -or ($item.Location.IndexOf($global:filterLoc.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+                return $false
+            }
+        }
+
+        # 4. Remarks Keyword Search
+        if ($global:filterRem -and $global:filterRem.Trim() -ne "") {
+            if (-not $item.Remarks -or ($item.Remarks.IndexOf($global:filterRem.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+                return $false
+            }
+        }
+
+        return $true
     }
 }
 
 function Update-FilterBtnStatus {
     $p = Get-Palette
     $bc = [System.Windows.Media.BrushConverter]::new()
-    if ($global:filterTagIds.Count -gt 0) {
-        $filterBtn.Content = "🔍 Filter (" + $global:filterTagIds.Count + ")"
+    $activeCount = 0
+    if ($global:filterTagIds.Count -gt 0) { $activeCount += $global:filterTagIds.Count }
+    if ($global:filterDesc -and $global:filterDesc.Trim() -ne "") { $activeCount++ }
+    if ($global:filterLoc -and $global:filterLoc.Trim() -ne "") { $activeCount++ }
+    if ($global:filterRem -and $global:filterRem.Trim() -ne "") { $activeCount++ }
+
+    if ($activeCount -gt 0) {
+        $filterBtn.Content = "🔍 Filter ($activeCount)"
         $filterBtn.Background = $bc.ConvertFromString("#89B4FA")
         $filterBtn.Foreground = $bc.ConvertFromString("#11111B")
     } else {
@@ -439,7 +474,7 @@ function Update-FilterBtnStatus {
     }
 }
 
-# High-Performance Custom Calendar Month Grid Engine
+# Custom Calendar Month Grid Engine
 function Render-CustomCalendar {
     if (-not $global:isCalendarView) { return }
 
@@ -458,14 +493,12 @@ function Render-CustomCalendar {
 
     $filteredTasks = Get-FilteredTasks
 
-    # Leading Empty Space Cells
     for ($i = 0; $i -lt $startDow; $i++) {
         $emptyBox = New-Object System.Windows.Controls.Border
         $emptyBox.Background = [System.Windows.Media.Brushes]::Transparent
         $calDaysGrid.Children.Add($emptyBox) | Out-Null
     }
 
-    # Month Days Cells
     for ($day = 1; $day -le $daysInMonth; $day++) {
         $currDate = [DateTime]::new($year, $month, $day)
         $dStr = $currDate.ToString("dd-MM-yyyy")
@@ -487,13 +520,11 @@ function Render-CustomCalendar {
         $btn.Template = [System.Windows.Markup.XamlReader]::Parse($btnTemplate)
 
         if ($taskCount -gt 0) {
-            # Highlighted Day with Event(s)
             $btn.Background = $bc.ConvertFromString("#89B4FA")
             $btn.Foreground = $bc.ConvertFromString("#11111B")
             $btn.Content = "$day ($taskCount)"
             $btn.FontWeight = [System.Windows.FontWeights]::Bold
         } else {
-            # Standard Day Cell
             $btn.Background = $bc.ConvertFromString($p.InputBg)
             $btn.Foreground = $bc.ConvertFromString($p.TextPrimary)
             $btn.Content = "$day"
@@ -508,7 +539,6 @@ function Render-CustomCalendar {
         $calDaysGrid.Children.Add($btn) | Out-Null
     }
 
-    # Trailing Cells
     $totalCellsSoFar = $startDow + $daysInMonth
     $targetTotal = if ($totalCellsSoFar -gt 35) { 42 } else { 35 }
 
@@ -519,7 +549,7 @@ function Render-CustomCalendar {
     }
 }
 
-# Fast Navigation Button Actions
+# Fast Navigation Actions
 $calPrevYearBtn.Add_Click({
     $global:calDisplayDate = $global:calDisplayDate.AddYears(-1)
     Render-CustomCalendar
@@ -675,13 +705,11 @@ function Load-Data {
             $global:tasks.Clear()
             if ($items) {
                 foreach ($item in @($items)) {
-                    if (-not ($item.PSObject.Properties['Alert1_Time'])) { Add-Member -InputObject $item -NotePropertyName "Alert1_Time" -NotePropertyValue "" }
-                    if (-not ($item.PSObject.Properties['Alert1_Done'])) { Add-Member -InputObject $item -NotePropertyName "Alert1_Done" -NotePropertyValue "FALSE" }
-                    if (-not ($item.PSObject.Properties['Alert2_Time'])) { Add-Member -InputObject $item -NotePropertyName "Alert2_Time" -NotePropertyValue "" }
-                    if (-not ($item.PSObject.Properties['Alert2_Done'])) { Add-Member -InputObject $item -NotePropertyName "Alert2_Done" -NotePropertyValue "FALSE" }
-                    if (-not ($item.PSObject.Properties['Alert3_Time'])) { Add-Member -InputObject $item -NotePropertyName "Alert3_Time" -NotePropertyValue "" }
-                    if (-not ($item.PSObject.Properties['Alert3_Done'])) { Add-Member -InputObject $item -NotePropertyName "Alert3_Done" -NotePropertyValue "FALSE" }
-                    if (-not ($item.PSObject.Properties['Tags']))        { Add-Member -InputObject $item -NotePropertyName "Tags"        -NotePropertyValue "" }
+                    for ($i = 1; $i -le 5; $i++) {
+                        if (-not ($item.PSObject.Properties["Alert${i}_Time"])) { Add-Member -InputObject $item -NotePropertyName "Alert${i}_Time" -NotePropertyValue "" }
+                        if (-not ($item.PSObject.Properties["Alert${i}_Done"])) { Add-Member -InputObject $item -NotePropertyName "Alert${i}_Done" -NotePropertyValue "FALSE" }
+                    }
+                    if (-not ($item.PSObject.Properties['Tags'])) { Add-Member -InputObject $item -NotePropertyName "Tags" -NotePropertyValue "" }
                     $global:tasks.Add($item)
                 }
             }
@@ -710,12 +738,12 @@ function Reset-Inputs {
     $selectTagsBtn.Content = "🏷️ Select Tags (0)"
 }
 
-# Tag Filter Dialog
+# Tag Filter Dialog (With Description, Location, and Remarks Search)
 function Open-FilterDialog {
     $fltXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Filter Entries" Height="360" Width="340" WindowStyle="None" 
+        Title="Filter Entries" Height="480" Width="360" WindowStyle="None" 
         AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
     <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
         <Grid Margin="16">
@@ -725,10 +753,28 @@ function Open-FilterDialog {
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             
-            <TextBlock Grid.Row="0" Text="🔍 Filter Entries by Tag" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBlock Grid.Row="0" Text="🔍 Filter &amp; Search Entries" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
 
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                <StackPanel Name="FLTStack"/>
+                <StackPanel>
+                    <!-- Keyword Search Section -->
+                    <TextBlock Text="Keyword Search:" Foreground="#89B4FA" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
+
+                    <TextBlock Text="Description contains:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <TextBox Name="FLTDesc" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                    <TextBlock Text="Location contains:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <TextBox Name="FLTLoc" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,6" CaretBrush="#89B4FA"/>
+
+                    <TextBlock Text="Remarks contains:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
+                    <TextBox Name="FLTRem" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,5" FontSize="12" Margin="0,0,0,8" CaretBrush="#89B4FA"/>
+
+                    <Border BorderBrush="#313244" BorderThickness="0,1,0,0" Margin="0,2,0,8"/>
+
+                    <!-- Tag Filter Section -->
+                    <TextBlock Text="Filter by Tags:" Foreground="#89B4FA" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
+                    <StackPanel Name="FLTStack"/>
+                </StackPanel>
             </ScrollViewer>
 
             <Grid Grid.Row="2" Margin="0,8,0,0">
@@ -736,7 +782,7 @@ function Open-FilterDialog {
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Button Name="FLTClearBtn" Grid.Column="0" Content="Show All (Clear)" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,0,4,0" Cursor="Hand"/>
+                <Button Name="FLTClearBtn" Grid.Column="0" Content="Reset All (Clear)" Foreground="#CDD6F4" Background="#313244" FontSize="12" Padding="0,6" Margin="0,0,4,0" Cursor="Hand"/>
                 <Button Name="FLTApplyBtn" Grid.Column="1" Content="Apply Filter" Foreground="#11111B" Background="#89B4FA" FontWeight="Bold" FontSize="12" Padding="0,6" Margin="4,0,0,0" Cursor="Hand"/>
             </Grid>
         </Grid>
@@ -745,8 +791,16 @@ function Open-FilterDialog {
 '@
     $fltWin = [System.Windows.Markup.XamlReader]::Parse($fltXaml)
     $fltStack    = $fltWin.FindName('FLTStack')
+    $fltDesc     = $fltWin.FindName('FLTDesc')
+    $fltLoc      = $fltWin.FindName('FLTLoc')
+    $fltRem      = $fltWin.FindName('FLTRem')
     $fltClearBtn = $fltWin.FindName('FLTClearBtn')
     $fltApplyBtn = $fltWin.FindName('FLTApplyBtn')
+
+    # Pre-fill existing keyword searches
+    $fltDesc.Text = $global:filterDesc
+    $fltLoc.Text  = $global:filterLoc
+    $fltRem.Text  = $global:filterRem
 
     $localFilterIds = [System.Collections.Generic.List[string]]::new()
     foreach ($id in $global:filterTagIds) { $localFilterIds.Add($id) }
@@ -777,6 +831,9 @@ function Open-FilterDialog {
 
     $fltClearBtn.Add_Click({
         $global:filterTagIds.Clear()
+        $global:filterDesc = ""
+        $global:filterLoc  = ""
+        $global:filterRem  = ""
         Update-FilterBtnStatus
         Render-Cards
         Render-CustomCalendar
@@ -786,6 +843,9 @@ function Open-FilterDialog {
     $fltApplyBtn.Add_Click({
         $global:filterTagIds.Clear()
         foreach ($id in $localFilterIds) { $global:filterTagIds.Add($id) }
+        $global:filterDesc = $fltDesc.Text
+        $global:filterLoc  = $fltLoc.Text
+        $global:filterRem  = $fltRem.Text
         Update-FilterBtnStatus
         Render-Cards
         Render-CustomCalendar
@@ -1013,7 +1073,6 @@ function Open-TagManager {
             $row = New-Object System.Windows.Controls.DockPanel
             $row.Margin = New-Object System.Windows.Thickness(0,0,0,6)
 
-            # Delete Button with Automatic Task Purge
             $delBtn = New-Object System.Windows.Controls.Button
             $delBtn.Content = "🗑"
             $delBtn.Foreground = $bc.ConvertFromString("#E64553")
@@ -1027,7 +1086,6 @@ function Open-TagManager {
                 $global:tags.Remove($this.Tag) | Out-Null
                 Save-Tags
 
-                # Purge deleted tag ID from all tasks
                 foreach ($tsk in $global:tasks) {
                     if ($tsk.Tags) {
                         $validIds = @($tsk.Tags.Split(';') | Where-Object { $_ -and $_ -ne $deletedTagId })
@@ -1036,7 +1094,6 @@ function Open-TagManager {
                 }
                 Save-Data
 
-                # Clean main input selection if selected
                 $global:selectedTagIds.Remove($deletedTagId) | Out-Null
                 $selectTagsBtn.Content = "🏷️ Select Tags (" + $global:selectedTagIds.Count + ")"
 
@@ -1045,7 +1102,6 @@ function Open-TagManager {
                 Render-CustomCalendar
             })
 
-            # Edit Button
             $editBtn = New-Object System.Windows.Controls.Button
             $editBtn.Content = "✏️"
             $editBtn.Foreground = $bc.ConvertFromString("#CDD6F4")
@@ -1294,6 +1350,10 @@ function Open-RoutineGenerator {
                     Alert2_Done = "FALSE"
                     Alert3_Time = ""
                     Alert3_Done = "FALSE"
+                    Alert4_Time = ""
+                    Alert4_Done = "FALSE"
+                    Alert5_Time = ""
+                    Alert5_Done = "FALSE"
                     Tags        = ($script:rgSelectedTagIds -join ";")
                 }
                 $global:tasks.Insert(0, $newItem)
@@ -1471,7 +1531,7 @@ $viewToggleBtn.Add_Click({
     }
 })
 
-# Edit Entry Dialog (With Active Tag Validation)
+# Edit Entry Dialog
 function Open-EditDialog ($task) {
     $editXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1583,7 +1643,6 @@ function Open-EditDialog ($task) {
     $script:eSelectedTagIds = [System.Collections.Generic.List[string]]::new()
     if ($task.Tags) {
         foreach ($id in $task.Tags.Split(';')) {
-            # Filter out deleted/orphaned tags
             if ($id -and ($global:tags | Where-Object { $_.Id -eq $id })) {
                 $script:eSelectedTagIds.Add($id)
             }
@@ -1745,7 +1804,7 @@ function Check-Alerts {
     foreach ($t in $global:tasks) {
         if ($t.Deleted -eq "TRUE" -or $t.Deleted -eq "True") { continue }
 
-        for ($i = 1; $i -le 3; $i++) {
+        for ($i = 1; $i -le 5; $i++) {
             $timeProp = "Alert${i}_Time"
             $doneProp = "Alert${i}_Done"
 
@@ -1773,7 +1832,7 @@ function Open-AlertConfigurator ($task) {
     $configXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Configure Alerts" Height="380" Width="380" WindowStyle="None" 
+        Title="Configure Alerts" Height="500" Width="380" WindowStyle="None" 
         AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
     <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
         <Grid Margin="16">
@@ -1783,59 +1842,97 @@ function Open-AlertConfigurator ($task) {
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             
-            <TextBlock Grid.Row="0" Text="🔔 Configure Reminders (Up to 3)" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,12"/>
+            <TextBlock Grid.Row="0" Text="🔔 Configure Reminders (5 Max)" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
 
-            <StackPanel Grid.Row="1">
-                <TextBlock Text="Alert 1:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
-                <Grid Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="60"/>
-                        <ColumnDefinition Width="80"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Name="Val1" Grid.Column="0" Text="15" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
-                    <ComboBox Name="Unit1" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="0">
-                        <ComboBoxItem Content="Mins"/>
-                        <ComboBoxItem Content="Hours"/>
-                        <ComboBoxItem Content="Days"/>
-                    </ComboBox>
-                    <CheckBox Name="Ena1" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
-                </Grid>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <!-- Relative Alerts Section -->
+                    <TextBlock Text="Relative Alerts (Before Event):" Foreground="#89B4FA" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
 
-                <TextBlock Text="Alert 2:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
-                <Grid Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="60"/>
-                        <ColumnDefinition Width="80"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Name="Val2" Grid.Column="0" Text="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
-                    <ComboBox Name="Unit2" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="1">
-                        <ComboBoxItem Content="Mins"/>
-                        <ComboBoxItem Content="Hours"/>
-                        <ComboBoxItem Content="Days"/>
-                    </ComboBox>
-                    <CheckBox Name="Ena2" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
-                </Grid>
+                    <!-- Alert 1 -->
+                    <TextBlock Text="Alert 1:" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,2"/>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="60"/>
+                            <ColumnDefinition Width="80"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="Val1" Grid.Column="0" Text="15" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
+                        <ComboBox Name="Unit1" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="0">
+                            <ComboBoxItem Content="Mins"/>
+                            <ComboBoxItem Content="Hours"/>
+                            <ComboBoxItem Content="Days"/>
+                        </ComboBox>
+                        <CheckBox Name="Ena1" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                    </Grid>
 
-                <TextBlock Text="Alert 3:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
-                <Grid Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="60"/>
-                        <ColumnDefinition Width="80"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Name="Val3" Grid.Column="0" Text="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
-                    <ComboBox Name="Unit3" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="2">
-                        <ComboBoxItem Content="Mins"/>
-                        <ComboBoxItem Content="Hours"/>
-                        <ComboBoxItem Content="Days"/>
-                    </ComboBox>
-                    <CheckBox Name="Ena3" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
-                </Grid>
-            </StackPanel>
+                    <!-- Alert 2 -->
+                    <TextBlock Text="Alert 2:" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,2"/>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="60"/>
+                            <ColumnDefinition Width="80"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="Val2" Grid.Column="0" Text="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
+                        <ComboBox Name="Unit2" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="1">
+                            <ComboBoxItem Content="Mins"/>
+                            <ComboBoxItem Content="Hours"/>
+                            <ComboBoxItem Content="Days"/>
+                        </ComboBox>
+                        <CheckBox Name="Ena2" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                    </Grid>
 
-            <Grid Grid.Row="2">
+                    <!-- Alert 3 -->
+                    <TextBlock Text="Alert 3:" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,2"/>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="60"/>
+                            <ColumnDefinition Width="80"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="Val3" Grid.Column="0" Text="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="12"/>
+                        <ComboBox Name="Unit3" Grid.Column="1" Margin="4,0,4,0" FontSize="11" SelectedIndex="2">
+                            <ComboBoxItem Content="Mins"/>
+                            <ComboBoxItem Content="Hours"/>
+                            <ComboBoxItem Content="Days"/>
+                        </ComboBox>
+                        <CheckBox Name="Ena3" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <!-- Manual Absolute Alerts Section -->
+                    <Border BorderBrush="#313244" BorderThickness="0,1,0,0" Margin="0,4,0,8"/>
+                    <TextBlock Text="Manual Absolute Alerts (Specific Date &amp; Time):" Foreground="#A6E3A1" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
+
+                    <!-- Manual Alert 1 (Alert 4) -->
+                    <TextBlock Text="Manual Alert 1 (Date | Time):" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,2"/>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.2*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="MDate4" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="11" Margin="0,0,4,0"/>
+                        <TextBox Name="MTime4" Grid.Column="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="11" Margin="0,0,4,0"/>
+                        <CheckBox Name="Ena4" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <!-- Manual Alert 2 (Alert 5) -->
+                    <TextBlock Text="Manual Alert 2 (Date | Time):" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,2"/>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.2*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="MDate5" Grid.Column="0" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="11" Margin="0,0,4,0"/>
+                        <TextBox Name="MTime5" Grid.Column="1" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" Padding="6,4" FontSize="11" Margin="0,0,4,0"/>
+                        <CheckBox Name="Ena5" Grid.Column="2" Content="Enabled" Foreground="#CDD6F4" VerticalAlignment="Center"/>
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="2" Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
@@ -1852,11 +1949,39 @@ function Open-AlertConfigurator ($task) {
     $v1 = $cfgWin.FindName('Val1'); $u1 = $cfgWin.FindName('Unit1'); $e1 = $cfgWin.FindName('Ena1')
     $v2 = $cfgWin.FindName('Val2'); $u2 = $cfgWin.FindName('Unit2'); $e2 = $cfgWin.FindName('Ena2')
     $v3 = $cfgWin.FindName('Val3'); $u3 = $cfgWin.FindName('Unit3'); $e3 = $cfgWin.FindName('Ena3')
+
+    $mDate4 = $cfgWin.FindName('MDate4'); $mTime4 = $cfgWin.FindName('MTime4'); $e4 = $cfgWin.FindName('Ena4')
+    $mDate5 = $cfgWin.FindName('MDate5'); $mTime5 = $cfgWin.FindName('MTime5'); $e5 = $cfgWin.FindName('Ena5')
+
     $saveBtn = $cfgWin.FindName('SaveBtn'); $cancelBtn = $cfgWin.FindName('CancelBtn')
 
     if ($task.Alert1_Time) { $e1.IsChecked = $true }
     if ($task.Alert2_Time) { $e2.IsChecked = $true }
     if ($task.Alert3_Time) { $e3.IsChecked = $true }
+
+    if ($task.Alert4_Time) {
+        $e4.IsChecked = $true
+        $dt4 = [DateTime]::MinValue
+        if ([DateTime]::TryParseExact($task.Alert4_Time, "dd-MM-yyyy HH:mm:ss", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dt4)) {
+            $mDate4.Text = $dt4.ToString("dd-MM-yyyy")
+            $mTime4.Text = $dt4.ToString("HH:mm")
+        }
+    } else {
+        $mDate4.Text = $task.EventDate
+        $mTime4.Text = $task.Time
+    }
+
+    if ($task.Alert5_Time) {
+        $e5.IsChecked = $true
+        $dt5 = [DateTime]::MinValue
+        if ([DateTime]::TryParseExact($task.Alert5_Time, "dd-MM-yyyy HH:mm:ss", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dt5)) {
+            $mDate5.Text = $dt5.ToString("dd-MM-yyyy")
+            $mTime5.Text = $dt5.ToString("HH:mm")
+        }
+    } else {
+        $mDate5.Text = $task.EventDate
+        $mTime5.Text = $task.Time
+    }
 
     $cancelBtn.Add_Click({ $cfgWin.Close() })
 
@@ -1888,6 +2013,30 @@ function Open-AlertConfigurator ($task) {
 
             $task.Alert3_Time = & $calcTarget $v3 $u3 $e3
             $task.Alert3_Done = "FALSE"
+
+            if ($e4.IsChecked -and $mDate4.Text -and $mTime4.Text) {
+                $manualDt4 = [DateTime]::Now
+                $str4 = "$($mDate4.Text.Trim()) $($mTime4.Text.Trim())"
+                if ([DateTime]::TryParseExact($str4, "dd-MM-yyyy HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$manualDt4)) {
+                    $task.Alert4_Time = $manualDt4.ToString("dd-MM-yyyy HH:mm:ss")
+                    $task.Alert4_Done = "FALSE"
+                }
+            } else {
+                $task.Alert4_Time = ""
+                $task.Alert4_Done = "FALSE"
+            }
+
+            if ($e5.IsChecked -and $mDate5.Text -and $mTime5.Text) {
+                $manualDt5 = [DateTime]::Now
+                $str5 = "$($mDate5.Text.Trim()) $($mTime5.Text.Trim())"
+                if ([DateTime]::TryParseExact($str5, "dd-MM-yyyy HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$manualDt5)) {
+                    $task.Alert5_Time = $manualDt5.ToString("dd-MM-yyyy HH:mm:ss")
+                    $task.Alert5_Done = "FALSE"
+                }
+            } else {
+                $task.Alert5_Time = ""
+                $task.Alert5_Done = "FALSE"
+            }
 
             Save-Data
             Render-Cards
@@ -2119,7 +2268,7 @@ function Render-Cards {
         [System.Windows.Controls.Grid]::SetColumn($btnStack, 1)
 
         # Alert Button
-        $hasAlerts = $item.Alert1_Time -or $item.Alert2_Time -or $item.Alert3_Time
+        $hasAlerts = $item.Alert1_Time -or $item.Alert2_Time -or $item.Alert3_Time -or $item.Alert4_Time -or $item.Alert5_Time
         $alertBtn = New-Object System.Windows.Controls.Button
         $alertBtn.Content = if ($hasAlerts) { "🔔" } else { "🔕" }
         if ($hasAlerts) { $alertBtn.Foreground = $bc.ConvertFromString("#89B4FA") } else { $alertBtn.Foreground = $bc.ConvertFromString("#585B70") }
@@ -2219,6 +2368,10 @@ $addEntry = {
             Alert2_Done = "FALSE"
             Alert3_Time = ""
             Alert3_Done = "FALSE"
+            Alert4_Time = ""
+            Alert4_Done = "FALSE"
+            Alert5_Time = ""
+            Alert5_Done = "FALSE"
             Tags        = ($global:selectedTagIds -join ";")
         }
         $global:tasks.Insert(0, $newItem)
