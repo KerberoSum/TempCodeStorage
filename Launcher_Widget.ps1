@@ -4,7 +4,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $win32Api = @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32Focus {
+public class Win32Launcher {
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")]
@@ -176,19 +176,35 @@ function Save-Config {
     } catch { }
 }
 
-# Win32 Helper: Force Window to Front
-function Set-WindowToFront ($hwnd) {
-    if ($hwnd -and $hwnd -ne [IntPtr]::Zero) {
-        try {
-            if ([Win32Focus]::IsIconic($hwnd)) {
-                [Win32Focus]::ShowWindow($hwnd, 9) # SW_RESTORE
-            }
-            [Win32Focus]::SetForegroundWindow($hwnd)
-        } catch { }
+# Windows Shell Execution Helper
+function Start-WidgetFile ($targetPath) {
+    if (-not (Test-Path $targetPath)) {
+        [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
+        return $null
+    }
+
+    $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+
+    if ($ext -eq ".ps1") {
+        $psi.FileName = "powershell.exe"
+        $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$targetPath`""
+    } else {
+        $psi.FileName = $targetPath
+    }
+
+    $psi.WorkingDirectory = Split-Path -Parent $targetPath
+    $psi.UseShellExecute = $true
+
+    try {
+        return [System.Diagnostics.Process]::Start($psi)
+    } catch {
+        [System.Windows.MessageBox]::Show("Failed to launch file:`n$_", "Execution Error")
+        return $null
     }
 }
 
-# Core Logic: Launch Target or Bring to Front
+# Core Logic: Launch Target or Bring Window to Front
 function Activate-Target ($ctrlData) {
     $targetPath = $ctrlData.Item.Path
     if (-not $targetPath -or -not (Test-Path $targetPath)) {
@@ -198,18 +214,17 @@ function Activate-Target ($ctrlData) {
 
     $activated = $false
 
-    # 1. Attempt to bring existing active process window to front
+    # 1. Attempt to bring running window to front
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
         foreach ($pid in $ctrlData.Pids) {
             try {
                 $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
                 if ($p -and -not $p.HasExited) {
                     if ($p.MainWindowHandle -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
-                        Set-WindowToFront $p.MainWindowHandle
-                        $activated = $true
-                        break
-                    } else {
-                        [Microsoft.VisualBasic.Interaction]::AppActivate($pid)
+                        if ([Win32Launcher]::IsIconic($p.MainWindowHandle)) {
+                            [Win32Launcher]::ShowWindow($p.MainWindowHandle, 9) # SW_RESTORE
+                        }
+                        [Win32Launcher]::SetForegroundWindow($p.MainWindowHandle)
                         $activated = $true
                         break
                     }
@@ -218,25 +233,12 @@ function Activate-Target ($ctrlData) {
         }
     }
 
-    # 2. If not running, launch a new process
+    # 2. Launch new instance if not currently active or activation failed
     if (-not $activated) {
-        $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
-        try {
-            $proc = $null
-            if ($ext -eq ".ps1") {
-                $proc = Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath) -PassThru
-            } elseif ($ext -eq ".bat" -or $ext -eq ".cmd") {
-                $proc = Start-Process cmd -ArgumentList "/c `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath) -WindowStyle Hidden -PassThru
-            } else {
-                $proc = Start-Process $targetPath -WorkingDirectory (Split-Path -Parent $targetPath) -PassThru
-            }
-
-            if ($proc -and $proc.Id) {
-                if (-not $ctrlData.Pids) { $ctrlData.Pids = @() }
-                $ctrlData.Pids += $proc.Id
-            }
-        } catch {
-            [System.Windows.MessageBox]::Show("Failed to launch file:`n$_", "Execution Error")
+        $proc = Start-WidgetFile $targetPath
+        if ($proc -and $proc.Id) {
+            if (-not $ctrlData.Pids) { $ctrlData.Pids = @() }
+            $ctrlData.Pids += $proc.Id
         }
     }
 
@@ -244,7 +246,7 @@ function Activate-Target ($ctrlData) {
     Check-WidgetStatus
 }
 
-# Core Logic: Close Target Process
+# Core Logic: Close Process
 function Close-Target ($ctrlData) {
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
         foreach ($pid in $ctrlData.Pids) {
@@ -252,8 +254,8 @@ function Close-Target ($ctrlData) {
         }
     }
     
-    # Also search by script filename if launched via batch wrapper
-    if ($ctrlData.Item.Path) {
+    # Also search processes by target filename
+    if ($ctrlData.Item.Path -and (Test-Path $ctrlData.Item.Path)) {
         $baseName = [System.IO.Path]::GetFileNameWithoutExtension($ctrlData.Item.Path)
         $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
         foreach ($p in $procs) {
@@ -267,7 +269,7 @@ function Close-Target ($ctrlData) {
     Check-WidgetStatus
 }
 
-# Status Polling Engine: Checks process states & sets green highlights
+# Status Polling Engine: Checks process state and updates tile colors
 function Check-WidgetStatus {
     $myPid = $PID
     $bc = [System.Windows.Media.BrushConverter]::new()
@@ -275,7 +277,7 @@ function Check-WidgetStatus {
     foreach ($ctrl in $global:tileControls) {
         $alivePids = @()
 
-        # Check explicit tracked PIDs
+        # Check explicit process IDs
         if ($ctrl.Pids) {
             foreach ($pid in $ctrl.Pids) {
                 $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
@@ -285,32 +287,28 @@ function Check-WidgetStatus {
             }
         }
 
-        # WMI fallback match
+        # Check background script process match
         if ($alivePids.Count -eq 0 -and $ctrl.Item.Path -and (Test-Path $ctrl.Item.Path)) {
-            $path = $ctrl.Item.Path
-            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($path)
-            
-            $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='cmd.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($ctrl.Item.Path)
+            $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
             foreach ($p in $procs) {
-                if ($p.ProcessId -ne $myPid -and $p.CommandLine) {
-                    if ($p.CommandLine.Contains($baseName)) {
-                        $alivePids += $p.ProcessId
-                    }
+                if ($p.ProcessId -ne $myPid -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
+                    $alivePids += $p.ProcessId
                 }
             }
         }
 
         $ctrl.Pids = $alivePids
 
-        # Update UI Colors
+        # Update Tile Colors
         $window.Dispatcher.Invoke([Action]{
             if ($alivePids.Count -gt 0) {
-                # Active = Bright Green Highlight
+                # Running = Bright Green
                 $ctrl.Border.Background = $bc.ConvertFromString("#A6E3A1")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#11111B")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#11111B")
             } else {
-                # Closed = Standard Dark Mode
+                # Dark Mode Default
                 $ctrl.Border.Background = $bc.ConvertFromString("#181825")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
@@ -319,7 +317,7 @@ function Check-WidgetStatus {
     }
 }
 
-# Render Normal View Tiles (2 Per Row + Interactive Overlay)
+# Render Normal View Tiles (2 Per Row + Overlay Controls)
 function Render-NormalView {
     $tileWrapContainer.Children.Clear()
     $global:tileControls.Clear()
@@ -344,14 +342,14 @@ function Render-NormalView {
     <Border.Effect>
         <DropShadowEffect BlurRadius="8" Color="#000000" Opacity="0.3" ShadowDepth="2"/>
     </Border.Effect>
-    <Grid Name="TileGrid">
-        <!-- Main Tile Content -->
+    <Grid Name="TileGrid" Background="Transparent">
+        <!-- Tile Display Content -->
         <StackPanel VerticalAlignment="Center" IsHitTestVisible="False">
             <TextBlock Name="IconTxt" Text="$($item.Icon)" FontSize="24" HorizontalAlignment="Center"/>
             <TextBlock Name="NameTxt" Text="$($item.Name)" FontSize="12" FontWeight="Bold" Foreground="#CDD6F4" HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
         </StackPanel>
         
-        <!-- Hover Overlay -->
+        <!-- Hover Overlay Controls -->
         <Border Name="OverlayBorder" Background="#F01E1E2E" CornerRadius="12" Visibility="Collapsed" Cursor="Hand">
             <Grid Margin="6">
                 <Grid.ColumnDefinitions>
@@ -405,7 +403,12 @@ function Render-NormalView {
         $mainBdr.Add_MouseEnter({ $overlay.Visibility = [System.Windows.Visibility]::Visible })
         $mainBdr.Add_MouseLeave({ $overlay.Visibility = [System.Windows.Visibility]::Collapsed })
 
-        # Click Event Actions
+        # Left Click directly on tile body launches or shows widget
+        $mainBdr.Add_MouseLeftButtonDown({
+            Activate-Target $ctrlData
+        })
+
+        # Overlay Button Actions
         $actBtn.Add_Click({ Activate-Target $ctrlData })
         $clsBtn.Add_Click({ Close-Target $ctrlData })
 
@@ -527,7 +530,7 @@ function Render-BackstageView {
     }
 }
 
-# Toggle Between Dashboard Mode and Backstage Mode
+# Toggle Dashboard Mode vs Backstage Mode
 $modeToggleBtn.Add_Click({
     $global:isBackstageMode = -not $global:isBackstageMode
     $bc = [System.Windows.Media.BrushConverter]::new()
