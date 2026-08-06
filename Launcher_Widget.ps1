@@ -1,16 +1,45 @@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, Microsoft.VisualBasic
 
-# Native Win32 API for window restoration and focus
+# Native Win32 API for robust window restoration and focus
 $win32Api = @"
 using System;
 using System.Runtime.InteropServices;
 public class Win32Launcher {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+    
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+    
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    // This robustly finds the first visible window for a PID.
+    // Standard Get-Process often fails to find MainWindowHandle for WPF apps launched via hidden scripts.
+    public static IntPtr GetMainWindow(int pid) {
+        IntPtr bestHandle = IntPtr.Zero;
+        EnumWindows((hWnd, lParam) => {
+            uint windowPid;
+            GetWindowThreadProcessId(hWnd, out windowPid);
+            if (windowPid == pid && IsWindowVisible(hWnd)) {
+                bestHandle = hWnd;
+                return false; // Stop enumerating once we find a visible window
+            }
+            return true;
+        }, IntPtr.Zero);
+        return bestHandle;
+    }
 }
 "@
 Add-Type -TypeDefinition $win32Api -ErrorAction SilentlyContinue
@@ -23,28 +52,16 @@ if (-not $scriptDir) { $scriptDir = [Environment]::CurrentDirectory }
 $configPath = Join-Path $scriptDir "Launcher_Config.csv"
 $startupShortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WidgetControlPanel.lnk"
 
-# Robust Path Resolver: Handles Quotes, Relative Paths, and Literal Paths
 function Resolve-WidgetPath ($rawPath) {
     if (-not $rawPath) { return "" }
-    
-    # Clean whitespace and surrounding quotes
     $clean = $rawPath.Trim().Trim('"', "'").Trim()
     if (-not $clean) { return "" }
 
-    # 1. Check relative path against script directory
     if (-not [System.IO.Path]::IsPathRooted($clean)) {
         $combined = Join-Path $scriptDir $clean
-        if (Test-Path -LiteralPath $combined) {
-            return (Get-Item -LiteralPath $combined).FullName
-        }
+        if (Test-Path -LiteralPath $combined) { return (Get-Item -LiteralPath $combined).FullName }
     }
-
-    # 2. Check as absolute literal path
-    if (Test-Path -LiteralPath $clean) {
-        return (Get-Item -LiteralPath $clean).FullName
-    }
-
-    # Return cleaned path if not found (will trigger error message)
+    if (Test-Path -LiteralPath $clean) { return (Get-Item -LiteralPath $clean).FullName }
     return $clean
 }
 
@@ -68,7 +85,6 @@ $xaml = @'
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             
-            <!-- Header Bar -->
             <Grid Grid.Row="0" Margin="0,0,0,10" Background="Transparent" Name="HeaderGrid">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -83,7 +99,6 @@ $xaml = @'
                 <Button Name="CloseBtn" Grid.Column="2" Content="✕" Foreground="#A6ADC8" Background="Transparent" BorderThickness="0" FontSize="15" FontWeight="Bold" Cursor="Hand" Width="22" Height="22"/>
             </Grid>
 
-            <!-- Sub-Header Toolbar (Below Header Bar) -->
             <DockPanel Grid.Row="1" Margin="0,0,0,10">
                 <Button Name="ModeToggleBtn" Content="⚙️ Backstage" Foreground="#11111B" Background="#89B4FA" 
                         BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,6,0" Cursor="Hand" DockPanel.Dock="Left">
@@ -108,14 +123,11 @@ $xaml = @'
                 </Button>
             </DockPanel>
 
-            <!-- Main Content Area -->
             <Grid Grid.Row="2">
-                <!-- Normal View: 2 Buttons Per Row Grid -->
                 <ScrollViewer Name="NormalViewContainer" VerticalScrollBarVisibility="Auto">
                     <UniformGrid Name="TileWrapContainer" Columns="2" HorizontalAlignment="Stretch" VerticalAlignment="Top"/>
                 </ScrollViewer>
 
-                <!-- Backstage View: Settings and Configuration Management -->
                 <ScrollViewer Name="BackstageViewContainer" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
                     <StackPanel Name="BackstageStackContainer">
                         <TextBlock Text="Manage Launch Buttons:" Foreground="#89B4FA" FontSize="12" FontWeight="Bold" Margin="0,0,0,8"/>
@@ -134,7 +146,6 @@ $xaml = @'
                 </ScrollViewer>
             </Grid>
 
-            <!-- Footer Controls -->
             <DockPanel Grid.Row="3" Margin="0,8,0,0">
                 <Button Name="StartupBtn" Content="🚀 Startup: OFF" Foreground="#BAC2DE" Background="#313244" BorderThickness="0" FontSize="11" Padding="8,4" Cursor="Hand">
                     <Button.Template>
@@ -145,17 +156,15 @@ $xaml = @'
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
-                <TextBlock Name="FooterText" Text="Hover tiles for controls" Foreground="#585B70" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                <TextBlock Name="FooterText" Text="Click to launch, Hover to manage" Foreground="#585B70" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
             </DockPanel>
         </Grid>
     </Border>
 </Window>
 '@
 
-# Direct WPF Window Loading
 $window = [System.Windows.Markup.XamlReader]::Parse($xaml)
 
-# Element References
 $mainBorder             = $window.FindName('MainBorder')
 $headerGrid             = $window.FindName('HeaderGrid')
 $titleText              = $window.FindName('TitleText')
@@ -171,44 +180,33 @@ $addTileBtn             = $window.FindName('AddTileBtn')
 $startupBtn             = $window.FindName('StartupBtn')
 $footerText             = $window.FindName('FooterText')
 
-# Application State
 $global:launcherItems = [System.Collections.Generic.List[PSObject]]::new()
 $global:tileControls  = [System.Collections.Generic.List[PSObject]]::new()
 $global:isBackstageMode = $false
 
-# Load Config
 function Load-Config {
     if (-not (Test-Path -LiteralPath $configPath)) {
         $defaultPath = Join-Path $scriptDir "RunWidget.bat"
-        $defaultItems = @(
-            [PSCustomObject]@{ Id = [Guid]::NewGuid().ToString(); Name = "Daily Assistant"; Path = $defaultPath; Icon = "⚡" }
-        )
+        $defaultItems = @([PSCustomObject]@{ Id = [Guid]::NewGuid().ToString(); Name = "Daily Assistant"; Path = $defaultPath; Icon = "⚡" })
         $defaultItems | Export-Csv -Path $configPath -NoTypeInformation -Encoding utf8
     }
-
     try {
         $items = Import-Csv -Path $configPath -Encoding utf8 -ErrorAction Stop
         $global:launcherItems.Clear()
-        if ($items) {
-            foreach ($i in @($items)) { $global:launcherItems.Add($i) }
-        }
+        if ($items) { foreach ($i in @($items)) { $global:launcherItems.Add($i) } }
     } catch { }
 }
 
 function Save-Config {
-    try {
-        $global:launcherItems | Export-Csv -Path $configPath -NoTypeInformation -Encoding utf8 -ErrorAction Stop
-    } catch { }
+    try { $global:launcherItems | Export-Csv -Path $configPath -NoTypeInformation -Encoding utf8 -ErrorAction Stop } catch { }
 }
 
-# Windows Shell Execution Helper
 function Start-WidgetFile ($resolvedPath) {
     $ext = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
     $psi = New-Object System.Diagnostics.ProcessStartInfo
 
     if ($ext -eq ".ps1") {
         $psi.FileName = "powershell.exe"
-        # NOTE: If you want to see the PowerShell window, change '-WindowStyle Hidden' to '-WindowStyle Normal'
         $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$resolvedPath`""
     } else {
         $psi.FileName = $resolvedPath
@@ -217,36 +215,26 @@ function Start-WidgetFile ($resolvedPath) {
     $psi.WorkingDirectory = Split-Path -Parent $resolvedPath
     $psi.UseShellExecute = $true
 
-    try {
-        return [System.Diagnostics.Process]::Start($psi)
-    } catch {
-        [System.Windows.MessageBox]::Show("Failed to launch file:`n$_", "Execution Error")
-        return $null
-    }
+    try { return [System.Diagnostics.Process]::Start($psi) } catch { return $null }
 }
 
-# Core Logic: Launch Target or Bring Window to Front
 function Activate-Target ($ctrlData) {
     $resolvedPath = Resolve-WidgetPath $ctrlData.Item.Path
-
-    if (-not $resolvedPath -or -not (Test-Path -LiteralPath $resolvedPath)) {
-        [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$($ctrlData.Item.Path)", "File Not Found Error")
-        return
-    }
+    if (-not $resolvedPath -or -not (Test-Path -LiteralPath $resolvedPath)) { return }
 
     $activated = $false
 
-    # 1. Attempt to bring running window to front
+    # 1. Bring to front if already running
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
         foreach ($pid in $ctrlData.Pids) {
             try {
                 $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
                 if ($p -and -not $p.HasExited) {
-                    if ($p.MainWindowHandle -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
-                        if ([Win32Launcher]::IsIconic($p.MainWindowHandle)) {
-                            [Win32Launcher]::ShowWindow($p.MainWindowHandle, 9) # SW_RESTORE
-                        }
-                        [Win32Launcher]::SetForegroundWindow($p.MainWindowHandle)
+                    # Use our C# function to find the actual window, bypassing Hidden PowerShell window issues
+                    $hwnd = [Win32Launcher]::GetMainWindow($pid)
+                    if ($hwnd -ne [IntPtr]::Zero) {
+                        if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
+                        [Win32Launcher]::SetForegroundWindow($hwnd)
                         $activated = $true
                         break
                     }
@@ -255,11 +243,10 @@ function Activate-Target ($ctrlData) {
         }
     }
 
-    # 2. Launch new instance if not active
+    # 2. Launch new instance ONLY if not already activated
     if (-not $activated) {
         $proc = Start-WidgetFile $resolvedPath
         if ($proc -and $proc.Id) {
-            if (-not $ctrlData.Pids) { $ctrlData.Pids = @() }
             $ctrlData.Pids += $proc.Id
         }
     }
@@ -268,79 +255,91 @@ function Activate-Target ($ctrlData) {
     Check-WidgetStatus
 }
 
-# Core Logic: Close Process
 function Close-Target ($ctrlData) {
-    if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
-        foreach ($pid in $ctrlData.Pids) {
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-        }
+    # Kill known PIDs
+    if ($ctrlData.Pids) {
+        foreach ($pid in $ctrlData.Pids) { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue }
     }
     
+    # Sweep for orphaned processes based on the file name/type
     $resolvedPath = Resolve-WidgetPath $ctrlData.Item.Path
     if ($resolvedPath -and (Test-Path -LiteralPath $resolvedPath)) {
+        $ext = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
         $baseName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedPath)
-        $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
-        foreach ($p in $procs) {
-            if ($p.ProcessId -ne $PID -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
-                Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+        
+        if ($ext -eq ".exe") {
+            Stop-Process -Name $baseName -Force -ErrorAction SilentlyContinue
+        } else {
+            $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='cmd.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
+            foreach ($p in $procs) {
+                if ($p.ProcessId -ne $PID -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
+                    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }
 
+    $ctrlData.Pids = @()
     Start-Sleep -Milliseconds 300
     Check-WidgetStatus
 }
 
-# Status Polling Engine: Checks process state and updates tile colors
 function Check-WidgetStatus {
     $myPid = $PID
     $bc = [System.Windows.Media.BrushConverter]::new()
 
     foreach ($ctrl in $global:tileControls) {
-        $alivePids = @()
+        $foundPids = @()
 
-        # Check explicit process IDs
+        # Check existing PIDs first
         if ($ctrl.Pids) {
             foreach ($pid in $ctrl.Pids) {
                 $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
-                if ($p -and -not $p.HasExited) {
-                    $alivePids += $pid
-                }
+                if ($p -and -not $p.HasExited) { $foundPids += $pid }
             }
         }
 
-        # Check background script process match
+        # Scan for orphaned instances by name if not found
         $resolvedPath = Resolve-WidgetPath $ctrl.Item.Path
-        if ($alivePids.Count -eq 0 -and $resolvedPath -and (Test-Path -LiteralPath $resolvedPath)) {
+        if ($foundPids.Count -eq 0 -and $resolvedPath -and (Test-Path -LiteralPath $resolvedPath)) {
+            $ext = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
             $baseName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedPath)
-            $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
-            foreach ($p in $procs) {
-                if ($p.ProcessId -ne $myPid -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
-                    $alivePids += $p.ProcessId
+            
+            if ($ext -eq ".exe") {
+                $procs = Get-Process -Name $baseName -ErrorAction SilentlyContinue
+                if ($procs) { foreach ($p in $procs) { $foundPids += $p.Id } }
+            } else {
+                $wmiProcs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='cmd.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
+                foreach ($p in $wmiProcs) {
+                    if ($p.ProcessId -ne $myPid -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
+                        $foundPids += $p.ProcessId
+                    }
                 }
             }
         }
 
-        $ctrl.Pids = $alivePids
+        # Keep PIDs unique
+        $uniquePids = @()
+        foreach ($p in $foundPids) { if ($p -notin $uniquePids) { $uniquePids += $p } }
+        $ctrl.Pids = $uniquePids
 
-        # Update Tile Colors
+        # Update UI Colors
         $window.Dispatcher.Invoke([Action]{
-            if ($alivePids.Count -gt 0) {
-                # Running = Bright Green
+            if ($uniquePids.Count -gt 0) {
                 $ctrl.Border.Background = $bc.ConvertFromString("#A6E3A1")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#11111B")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#11111B")
             } else {
-                # Dark Mode Default
                 $ctrl.Border.Background = $bc.ConvertFromString("#181825")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
+                # Hide overlay if widget closes while hovering
+                $ctrl.Overlay.Visibility = [System.Windows.Visibility]::Collapsed
             }
         }) | Out-Null
     }
 }
 
-# Render Normal View Tiles (2 Per Row + Interactive Overlay)
 function Render-NormalView {
     $tileWrapContainer.Children.Clear()
     $global:tileControls.Clear()
@@ -366,13 +365,11 @@ function Render-NormalView {
         <DropShadowEffect BlurRadius="8" Color="#000000" Opacity="0.3" ShadowDepth="2"/>
     </Border.Effect>
     <Grid Name="TileGrid" Background="Transparent">
-        <!-- Tile Display Content -->
         <StackPanel VerticalAlignment="Center" IsHitTestVisible="False">
             <TextBlock Name="IconTxt" Text="$($item.Icon)" FontSize="24" HorizontalAlignment="Center"/>
             <TextBlock Name="NameTxt" Text="$($item.Name)" FontSize="12" FontWeight="Bold" Foreground="#CDD6F4" HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
         </StackPanel>
         
-        <!-- Hover Overlay Controls -->
         <Border Name="OverlayBorder" Background="#F01E1E2E" CornerRadius="12" Visibility="Collapsed" Cursor="Hand">
             <Grid Margin="6">
                 <Grid.ColumnDefinitions>
@@ -423,17 +420,21 @@ function Render-NormalView {
         }
         $global:tileControls.Add($ctrlData)
 
-        # Store the data in the Tag property of the UI elements!
-        # This completely fixes the PowerShell closure bug where every button tries to open the last item.
         $mainBdr.Tag = $ctrlData
         $actBtn.Tag  = $ctrlData
         $clsBtn.Tag  = $ctrlData
 
-        # Mouse Hover Events using $this.Tag to prevent the same loop bug affecting hovers
-        $mainBdr.Add_MouseEnter({ $this.Tag.Overlay.Visibility = [System.Windows.Visibility]::Visible })
-        $mainBdr.Add_MouseLeave({ $this.Tag.Overlay.Visibility = [System.Windows.Visibility]::Collapsed })
+        # Hover Events: Overlay ONLY shows if the target is currently running
+        $mainBdr.Add_MouseEnter({
+            if ($this.Tag.Pids.Count -gt 0) {
+                $this.Tag.Overlay.Visibility = [System.Windows.Visibility]::Visible
+            }
+        })
+        $mainBdr.Add_MouseLeave({
+            $this.Tag.Overlay.Visibility = [System.Windows.Visibility]::Collapsed
+        })
 
-        # Click Actions using $this.Tag 
+        # Clicks
         $mainBdr.Add_MouseLeftButtonDown({ Activate-Target $this.Tag })
         $actBtn.Add_Click({ Activate-Target $this.Tag })
         $clsBtn.Add_Click({ Close-Target $this.Tag })
@@ -444,7 +445,6 @@ function Render-NormalView {
     Check-WidgetStatus
 }
 
-# Render Backstage Management View
 function Render-BackstageView {
     $backstageItemRows.Children.Clear()
     $bc = [System.Windows.Media.BrushConverter]::new()
@@ -458,7 +458,6 @@ function Render-BackstageView {
 
         $stack = New-Object System.Windows.Controls.StackPanel
 
-        # Row 1: Icon + Name Input + Delete
         $row1 = New-Object System.Windows.Controls.Grid
         $col1 = New-Object System.Windows.Controls.ColumnDefinition; $col1.Width = [System.Windows.GridLength]::Auto
         $col2 = New-Object System.Windows.Controls.ColumnDefinition; $col2.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
@@ -509,7 +508,6 @@ function Render-BackstageView {
         $row1.Children.Add($nameBox) | Out-Null
         $row1.Children.Add($delBtn) | Out-Null
 
-        # Row 2: Path Input + File Browser
         $row2 = New-Object System.Windows.Controls.Grid
         $pCol1 = New-Object System.Windows.Controls.ColumnDefinition; $pCol1.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
         $pCol2 = New-Object System.Windows.Controls.ColumnDefinition; $pCol2.Width = [System.Windows.GridLength]::Auto
@@ -556,7 +554,6 @@ function Render-BackstageView {
     }
 }
 
-# Toggle Dashboard Mode vs Backstage Mode
 $modeToggleBtn.Add_Click({
     $global:isBackstageMode = -not $global:isBackstageMode
     $bc = [System.Windows.Media.BrushConverter]::new()
@@ -573,12 +570,11 @@ $modeToggleBtn.Add_Click({
         $normalViewContainer.Visibility = [System.Windows.Visibility]::Visible
         $modeToggleBtn.Content = "⚙️ Backstage"
         $modeToggleBtn.Background = $bc.ConvertFromString("#89B4FA")
-        $footerText.Text = "Hover tiles for controls"
+        $footerText.Text = "Click to launch, Hover to manage"
         Render-NormalView
     }
 })
 
-# Add New Launcher Tile Action
 $addTileBtn.Add_Click({
     $newItem = [PSCustomObject]@{
         Id   = [Guid]::NewGuid().ToString()
@@ -591,7 +587,6 @@ $addTileBtn.Add_Click({
     Render-BackstageView
 })
 
-# Pin & Startup Helpers
 function Update-PinStatus {
     $bc = [System.Windows.Media.BrushConverter]::new()
     if ($window.Topmost) {
@@ -635,7 +630,6 @@ $startupBtn.Add_Click({
     Update-StartupStatus
 })
 
-# Basic Window Controls
 $headerGrid.Add_MouseDown({
     if ($_.ChangedButton -eq [System.Windows.Input.MouseButton]::Left) { $window.DragMove() }
 })
@@ -643,12 +637,10 @@ $headerGrid.Add_MouseDown({
 $minBtn.Add_Click({ $window.WindowState = [System.Windows.WindowState]::Minimized })
 $closeBtn.Add_Click({ $window.Close() })
 
-# Background Process Status Timer (Checks every 2 seconds)
 $statusTimer = New-Object System.Windows.Threading.DispatcherTimer
 $statusTimer.Interval = [TimeSpan]::FromSeconds(2)
 $statusTimer.Add_Tick({ if (-not $global:isBackstageMode) { Check-WidgetStatus } })
 
-# Initialization Sequence
 Load-Config
 Render-NormalView
 Update-PinStatus
