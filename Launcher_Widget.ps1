@@ -254,19 +254,47 @@ function Activate-Target ($ctrlData) {
     if (-not $resolvedPath -or -not (Test-Path -LiteralPath $resolvedPath)) { return }
 
     $activated = $false
+    $isRunning = $false
     $myPid = $PID
 
-    # 1. Bring to front if we already know the process ID
+    # 1. Bring to front if we already know the process ID (Scan Child Processes)
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
-        # FIXED: Replaced $pid with $procId
         foreach ($procId in $ctrlData.Pids) {
-            $hwnd = [Win32Launcher]::GetMainWindow($procId)
-            if ($hwnd -ne [IntPtr]::Zero) {
-                if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
-                [Win32Launcher]::SetForegroundWindow($hwnd)
-                $activated = $true
-                break
+            $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+            if ($p -and -not $p.HasExited) {
+                $isRunning = $true
+                
+                # Trace down the process tree to find any GUI spawned by the .bat file
+                $familyPids = @($procId)
+                try {
+                    $searchQueue = [System.Collections.Generic.Queue[int]]::new()
+                    $searchQueue.Enqueue($procId)
+                    while ($searchQueue.Count -gt 0) {
+                        $curr = $searchQueue.Dequeue()
+                        $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$curr" -Property ProcessId -ErrorAction SilentlyContinue
+                        if ($children) {
+                            foreach ($child in $children) {
+                                if ($child.ProcessId -notin $familyPids) {
+                                    $familyPids += $child.ProcessId
+                                    $searchQueue.Enqueue($child.ProcessId)
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+
+                # Attempt to bring ANY visible window in that family to the front
+                foreach ($famPid in $familyPids) {
+                    $hwnd = [Win32Launcher]::GetMainWindow($famPid)
+                    if ($hwnd -ne [IntPtr]::Zero) {
+                        if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
+                        [Win32Launcher]::SetForegroundWindow($hwnd)
+                        $activated = $true
+                        break
+                    }
+                }
             }
+            if ($activated) { break }
         }
     }
 
@@ -279,13 +307,14 @@ function Activate-Target ($ctrlData) {
                 if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
                 [Win32Launcher]::SetForegroundWindow($hwnd)
                 $activated = $true
+                $isRunning = $true
                 if ($titlePid -notin $ctrlData.Pids) { $ctrlData.Pids += $titlePid }
             }
         }
     }
 
-    # 3. Launch new instance ONLY if not already activated
-    if (-not $activated) {
+    # 3. Launch new instance ONLY if the script/program is completely closed
+    if (-not $isRunning) {
         $proc = Start-WidgetFile $resolvedPath
         if ($proc -and $proc.Id) {
             $ctrlData.Pids += $proc.Id
@@ -301,13 +330,12 @@ function Close-Target ($ctrlData) {
 
     # 1. Kill known PIDs and their children using Taskkill
     if ($ctrlData.Pids) {
-        # FIXED: Replaced $pid with $procId
         foreach ($procId in $ctrlData.Pids) { 
             if ($procId -ne $myPid) { & taskkill.exe /PID $procId /T /F 2>$null }
         }
     }
     
-    # 2. Sweep by Window Title Match (kills child processes that detached)
+    # 2. Sweep by Window Title Match
     if ($ctrlData.Item.Name) {
         $titlePid = [Win32Launcher]::FindPidByTitleMatch($ctrlData.Item.Name)
         if ($titlePid -gt 0 -and $titlePid -ne $myPid) {
@@ -347,7 +375,6 @@ function Check-WidgetStatus {
 
         # 1. Check if explicitly tracked PIDs are still alive
         if ($ctrl.Pids) {
-            # FIXED: Replaced $pid with $procId
             foreach ($procId in $ctrl.Pids) {
                 $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
                 if ($p -and -not $p.HasExited) { $foundPids += $procId }
