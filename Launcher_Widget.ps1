@@ -1,4 +1,4 @@
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, Microsoft.VisualBasic
 
 # Ensure paths resolve to the script's exact directory
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -105,7 +105,7 @@ $xaml = @'
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
-                <TextBlock Name="FooterText" Text="Click tiles to toggle widgets" Foreground="#585B70" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                <TextBlock Name="FooterText" Text="Hover tiles for controls" Foreground="#585B70" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
             </DockPanel>
         </Grid>
     </Border>
@@ -133,6 +133,7 @@ $footerText             = $window.FindName('FooterText')
 
 # Application State
 $global:launcherItems = [System.Collections.Generic.List[PSObject]]::new()
+$global:tileControls  = [System.Collections.Generic.List[PSObject]]::new()
 $global:isBackstageMode = $false
 
 # Load Config
@@ -160,30 +161,93 @@ function Save-Config {
     } catch { }
 }
 
-# Run Target File
-function Launch-Target ($targetPath) {
-    if (-not (Test-Path $targetPath)) {
-        [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
-        return
-    }
-
-    $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
-    try {
-        if ($ext -eq ".ps1") {
-            Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath)
-        } elseif ($ext -eq ".bat" -or $ext -eq ".cmd") {
-            Start-Process cmd -ArgumentList "/c `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath) -WindowStyle Hidden
-        } else {
-            Start-Process $targetPath -WorkingDirectory (Split-Path -Parent $targetPath)
+# Core Logic: Launch Target or Bring to Front
+function Activate-Target ($ctrlData) {
+    if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
+        # Already running: Bring to Front using VisualBasic AppActivate
+        foreach ($pid in $ctrlData.Pids) {
+            try { [Microsoft.VisualBasic.Interaction]::AppActivate($pid) } catch { }
         }
-    } catch {
-        [System.Windows.MessageBox]::Show("Failed to launch file:`n$_", "Execution Error")
+    } else {
+        # Not running: Launch new instance
+        $targetPath = $ctrlData.Item.Path
+        if (-not (Test-Path $targetPath)) {
+            [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
+            return
+        }
+
+        $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
+        try {
+            if ($ext -eq ".ps1") {
+                Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath)
+            } elseif ($ext -eq ".bat" -or $ext -eq ".cmd") {
+                Start-Process cmd -ArgumentList "/c `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath) -WindowStyle Hidden
+            } else {
+                Start-Process $targetPath -WorkingDirectory (Split-Path -Parent $targetPath)
+            }
+        } catch {
+            [System.Windows.MessageBox]::Show("Failed to launch file:`n$_", "Execution Error")
+        }
+    }
+    
+    # Check status quickly after launch
+    Start-Sleep -Milliseconds 500
+    Check-WidgetStatus
+}
+
+# Core Logic: Close/Kill Target
+function Close-Target ($ctrlData) {
+    if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
+        foreach ($pid in $ctrlData.Pids) {
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        }
+    }
+    # Check status quickly after close
+    Start-Sleep -Milliseconds 500
+    Check-WidgetStatus
+}
+
+# Status Polling Engine: Checks what's running and updates tiles
+function Check-WidgetStatus {
+    # Only fetch Process ID and CommandLine to keep it extremely fast and lightweight
+    $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='cmd.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
+    $bc = [System.Windows.Media.BrushConverter]::new()
+
+    foreach ($ctrl in $global:tileControls) {
+        $path = $ctrl.Item.Path
+        $fileName = [System.IO.Path]::GetFileName($path)
+        $pids = @()
+        
+        # Match process command line to widget path/filename
+        foreach ($p in $procs) {
+            if ($p.CommandLine -and ($p.CommandLine -match [regex]::Escape($path) -or $p.CommandLine -match [regex]::Escape($fileName))) {
+                $pids += $p.ProcessId
+            }
+        }
+        
+        $ctrl.Pids = $pids
+        
+        # UI Update based on running state
+        $window.Dispatcher.Invoke([Action]{
+            if ($pids.Count -gt 0) {
+                # Running = Green Highlight
+                $ctrl.Border.Background = $bc.ConvertFromString("#A6E3A1")
+                $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#11111B")
+                $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#11111B")
+            } else {
+                # Not Running = Dark Default
+                $ctrl.Border.Background = $bc.ConvertFromString("#181825")
+                $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
+                $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
+            }
+        }) | Out-Null
     }
 }
 
-# Render Normal View Tiles (2 Per Row)
+# Render Normal View Tiles (2 Per Row + Hover Overlay)
 function Render-NormalView {
     $tileWrapContainer.Children.Clear()
+    $global:tileControls.Clear()
     $bc = [System.Windows.Media.BrushConverter]::new()
 
     if ($global:launcherItems.Count -eq 0) {
@@ -199,41 +263,83 @@ function Render-NormalView {
     }
 
     foreach ($item in $global:launcherItems) {
-        $btn = New-Object System.Windows.Controls.Button
-        $btn.Height = 80
-        $btn.Margin = New-Object System.Windows.Thickness(4)
-        $btn.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
-        $btn.Background = $bc.ConvertFromString("#181825")
-        $btn.Foreground = $bc.ConvertFromString("#CDD6F4")
-        $btn.BorderThickness = 0
-        $btn.Cursor = [System.Windows.Input.Cursors]::Hand
-        $btn.Tag = $item.Path
-
-        $btnTemplate = @"
-<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
-    <Border Name="bd" Background="{TemplateBinding Background}" CornerRadius="12" Padding="8">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="8" Color="#000000" Opacity="0.3" ShadowDepth="2"/>
-        </Border.Effect>
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <TextBlock Text="$($item.Icon)" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            <TextBlock Grid.Row="1" Text="$($item.Name)" FontSize="12" FontWeight="Bold" Foreground="#CDD6F4" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-        </Grid>
-    </Border>
-</ControlTemplate>
+        $tileXaml = @"
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Name="MainBorder" Background="#181825" CornerRadius="12" Margin="4" Height="85">
+    <Border.Effect>
+        <DropShadowEffect BlurRadius="8" Color="#000000" Opacity="0.3" ShadowDepth="2"/>
+    </Border.Effect>
+    <Grid>
+        <!-- Normal Content -->
+        <StackPanel VerticalAlignment="Center">
+            <TextBlock Name="IconTxt" Text="$($item.Icon)" FontSize="24" HorizontalAlignment="Center"/>
+            <TextBlock Name="NameTxt" Text="$($item.Name)" FontSize="12" FontWeight="Bold" Foreground="#CDD6F4" HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+        
+        <!-- Hover Overlay -->
+        <Border Name="OverlayBorder" Background="#E61E1E2E" CornerRadius="12" Visibility="Collapsed">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                
+                <Button Name="ActivateBtn" Grid.Column="0" Content="▶ Show" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" FontSize="11" Margin="0,0,3,0" BorderThickness="0" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                
+                <Button Name="CloseBtn" Grid.Column="1" Content="✕ Close" Background="#E64553" Foreground="#11111B" FontWeight="Bold" FontSize="11" Margin="3,0,0,0" BorderThickness="0" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</Border>
 "@
-        $btn.Template = [System.Windows.Markup.XamlReader]::Parse($btnTemplate)
+        $parsedTile = [System.Windows.Markup.XamlReader]::Parse($tileXaml)
+        
+        $mainBdr    = $parsedTile.FindName("MainBorder")
+        $iconTxt    = $parsedTile.FindName("IconTxt")
+        $nameTxt    = $parsedTile.FindName("NameTxt")
+        $overlay    = $parsedTile.FindName("OverlayBorder")
+        $actBtn     = $parsedTile.FindName("ActivateBtn")
+        $clsBtn     = $parsedTile.FindName("CloseBtn")
 
-        $btn.Add_Click({
-            Launch-Target $this.Tag
-        })
+        # Create control data package for state tracking
+        $ctrlData = [PSCustomObject]@{
+            Item     = $item
+            Border   = $mainBdr
+            IconTxt  = $iconTxt
+            NameTxt  = $nameTxt
+            Pids     = @()
+        }
+        $global:tileControls.Add($ctrlData)
 
-        $tileWrapContainer.Children.Add($btn) | Out-Null
+        # Mouse Events for Hover
+        $mainBdr.Add_MouseEnter({ $overlay.Visibility = [System.Windows.Visibility]::Visible })
+        $mainBdr.Add_MouseLeave({ $overlay.Visibility = [System.Windows.Visibility]::Collapsed })
+
+        # Button Click Events
+        $actBtn.Add_Click({ Activate-Target $ctrlData })
+        $clsBtn.Add_Click({ Close-Target $ctrlData })
+
+        $tileWrapContainer.Children.Add($parsedTile) | Out-Null
     }
+
+    # Run an immediate check so tiles load with correct colors instantly
+    Check-WidgetStatus
 }
 
 # Render Backstage Management View
@@ -365,7 +471,7 @@ $modeToggleBtn.Add_Click({
         $normalViewContainer.Visibility = [System.Windows.Visibility]::Visible
         $modeToggleBtn.Content = "⚙️ Backstage"
         $modeToggleBtn.Background = $bc.ConvertFromString("#89B4FA")
-        $footerText.Text = "Click tiles to toggle widgets"
+        $footerText.Text = "Hover tiles for controls"
         Render-NormalView
     }
 })
@@ -435,10 +541,16 @@ $headerGrid.Add_MouseDown({
 $minBtn.Add_Click({ $window.WindowState = [System.Windows.WindowState]::Minimized })
 $closeBtn.Add_Click({ $window.Close() })
 
+# Background Alert Timer for Process Tracking (Checks every 3 seconds)
+$statusTimer = New-Object System.Windows.Threading.DispatcherTimer
+$statusTimer.Interval = [TimeSpan]::FromSeconds(3)
+$statusTimer.Add_Tick({ if (-not $global:isBackstageMode) { Check-WidgetStatus } })
+
 # Initialization Sequence
 Load-Config
 Render-NormalView
 Update-PinStatus
 Update-StartupStatus
+$statusTimer.Start()
 
 $window.ShowDialog() | Out-Null
