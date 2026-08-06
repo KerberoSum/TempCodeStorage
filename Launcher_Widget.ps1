@@ -12,7 +12,7 @@ $startupShortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\W
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Widget Control Panel" Height="500" Width="360" MinHeight="380" MinWidth="300"
+        Title="Widget Control Panel" Height="520" Width="360" MinHeight="380" MinWidth="300"
         WindowStyle="None" AllowsTransparency="True" 
         Background="Transparent" Topmost="True" 
         ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen">
@@ -23,16 +23,15 @@ $xaml = @'
         <Grid Margin="16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             
-            <!-- Header -->
-            <Grid Grid.Row="0" Margin="0,0,0,12" Background="Transparent" Name="HeaderGrid">
+            <!-- Header Bar -->
+            <Grid Grid.Row="0" Margin="0,0,0,10" Background="Transparent" Name="HeaderGrid">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
@@ -40,39 +39,40 @@ $xaml = @'
                     <TextBlock Name="TitleText" Text="🎛️ Control Panel" Foreground="#CDD6F4" FontSize="16" FontWeight="Bold"/>
                 </StackPanel>
 
-                <!-- Backstage / Normal Mode Toggle -->
-                <Button Name="ModeToggleBtn" Grid.Column="1" Content="⚙️ Backstage" Foreground="#11111B" Background="#89B4FA" 
-                        BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,4" Margin="0,0,6,0" Cursor="Hand">
-                    <Button.Template>
-                        <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
-                        </ControlTemplate>
-                    </Button.Template>
-                </Button>
-
-                <!-- Always-On-Top Pin Button -->
-                <Button Name="PinBtn" Grid.Column="2" Content="📌 Pinned" Foreground="#11111B" Background="#89B4FA" 
-                        BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,4" Margin="0,0,6,0" Cursor="Hand">
-                    <Button.Template>
-                        <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
-                        </ControlTemplate>
-                    </Button.Template>
-                </Button>
-
-                <Button Name="MinBtn" Grid.Column="3" Content="─" Foreground="#A6ADC8" Background="Transparent" BorderThickness="0" FontSize="14" FontWeight="Bold" Cursor="Hand" Width="22" Height="22" Margin="0,0,2,0"/>
-                <Button Name="CloseBtn" Grid.Column="4" Content="✕" Foreground="#A6ADC8" Background="Transparent" BorderThickness="0" FontSize="15" FontWeight="Bold" Cursor="Hand" Width="22" Height="22"/>
+                <Button Name="MinBtn" Grid.Column="1" Content="─" Foreground="#A6ADC8" Background="Transparent" BorderThickness="0" FontSize="14" FontWeight="Bold" Cursor="Hand" Width="22" Height="22" Margin="0,0,2,0"/>
+                <Button Name="CloseBtn" Grid.Column="2" Content="✕" Foreground="#A6ADC8" Background="Transparent" BorderThickness="0" FontSize="15" FontWeight="Bold" Cursor="Hand" Width="22" Height="22"/>
             </Grid>
 
+            <!-- Sub-Header Toolbar (Below Header Bar) -->
+            <DockPanel Grid.Row="1" Margin="0,0,0,10">
+                <Button Name="ModeToggleBtn" Content="⚙️ Backstage" Foreground="#11111B" Background="#89B4FA" 
+                        BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,6,0" Cursor="Hand" DockPanel.Dock="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <Button Name="PinBtn" Content="📌 Pinned" Foreground="#11111B" Background="#89B4FA" 
+                        BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Cursor="Hand" DockPanel.Dock="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </DockPanel>
+
             <!-- Main Content Area -->
-            <Grid Grid.Row="1">
-                <!-- Normal View: Interactive Tile Launcher -->
+            <Grid Grid.Row="2">
+                <!-- Normal View: 2 Buttons Per Row Grid -->
                 <ScrollViewer Name="NormalViewContainer" VerticalScrollBarVisibility="Auto">
-                    <WrapPanel Name="TileWrapContainer" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    <UniformGrid Name="TileWrapContainer" Columns="2" HorizontalAlignment="Stretch" VerticalAlignment="Top"/>
                 </ScrollViewer>
 
                 <!-- Backstage View: Settings and Configuration Management -->
@@ -95,7 +95,7 @@ $xaml = @'
             </Grid>
 
             <!-- Footer Controls -->
-            <DockPanel Grid.Row="2" Margin="0,8,0,0">
+            <DockPanel Grid.Row="3" Margin="0,8,0,0">
                 <Button Name="StartupBtn" Content="🚀 Startup: OFF" Foreground="#BAC2DE" Background="#313244" BorderThickness="0" FontSize="11" Padding="8,4" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -138,7 +138,6 @@ $global:isBackstageMode = $false
 # Load Config
 function Load-Config {
     if (-not (Test-Path $configPath)) {
-        # Create default configuration with standard RunWidget.bat if present
         $defaultPath = Join-Path $scriptDir "RunWidget.bat"
         $defaultItems = @(
             [PSCustomObject]@{ Id = [Guid]::NewGuid().ToString(); Name = "Daily Assistant"; Path = $defaultPath; Icon = "⚡" }
@@ -161,7 +160,7 @@ function Save-Config {
     } catch { }
 }
 
-# Run Target File (Bypasses execution policy for .ps1 scripts)
+# Run Target File
 function Launch-Target ($targetPath) {
     if (-not (Test-Path $targetPath)) {
         [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
@@ -182,7 +181,7 @@ function Launch-Target ($targetPath) {
     }
 }
 
-# Render Normal View Tiles
+# Render Normal View Tiles (2 Per Row)
 function Render-NormalView {
     $tileWrapContainer.Children.Clear()
     $bc = [System.Windows.Media.BrushConverter]::new()
@@ -194,14 +193,16 @@ function Render-NormalView {
         $emptyText.FontSize = 12
         $emptyText.TextAlignment = [System.Windows.TextAlignment]::Center
         $emptyText.Margin = New-Object System.Windows.Thickness(0,30,0,0)
+        [System.Windows.Controls.Grid]::SetColumnSpan($emptyText, 2)
         $tileWrapContainer.Children.Add($emptyText) | Out-Null
         return
     }
 
     foreach ($item in $global:launcherItems) {
         $btn = New-Object System.Windows.Controls.Button
-        $btn.Width = 145; $btn.Height = 85
-        $btn.Margin = New-Object System.Windows.Thickness(6)
+        $btn.Height = 80
+        $btn.Margin = New-Object System.Windows.Thickness(4)
+        $btn.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
         $btn.Background = $bc.ConvertFromString("#181825")
         $btn.Foreground = $bc.ConvertFromString("#CDD6F4")
         $btn.BorderThickness = 0
