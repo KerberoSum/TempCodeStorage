@@ -47,7 +47,6 @@ public class Win32Launcher {
         return bestHandle;
     }
 
-    // NEW: Searches for any visible window that contains the button's name
     public static int FindPidByTitleMatch(string titlePart) {
         if (string.IsNullOrEmpty(titlePart)) return 0;
         int outPid = 0;
@@ -259,8 +258,9 @@ function Activate-Target ($ctrlData) {
 
     # 1. Bring to front if we already know the process ID
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
-        foreach ($pid in $ctrlData.Pids) {
-            $hwnd = [Win32Launcher]::GetMainWindow($pid)
+        # FIXED: Replaced $pid with $procId
+        foreach ($procId in $ctrlData.Pids) {
+            $hwnd = [Win32Launcher]::GetMainWindow($procId)
             if ($hwnd -ne [IntPtr]::Zero) {
                 if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
                 [Win32Launcher]::SetForegroundWindow($hwnd)
@@ -301,8 +301,9 @@ function Close-Target ($ctrlData) {
 
     # 1. Kill known PIDs and their children using Taskkill
     if ($ctrlData.Pids) {
-        foreach ($pid in $ctrlData.Pids) { 
-            if ($pid -ne $myPid) { & taskkill.exe /PID $pid /T /F 2>$null }
+        # FIXED: Replaced $pid with $procId
+        foreach ($procId in $ctrlData.Pids) { 
+            if ($procId -ne $myPid) { & taskkill.exe /PID $procId /T /F 2>$null }
         }
     }
     
@@ -346,9 +347,10 @@ function Check-WidgetStatus {
 
         # 1. Check if explicitly tracked PIDs are still alive
         if ($ctrl.Pids) {
-            foreach ($pid in $ctrl.Pids) {
-                $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
-                if ($p -and -not $p.HasExited) { $foundPids += $pid }
+            # FIXED: Replaced $pid with $procId
+            foreach ($procId in $ctrl.Pids) {
+                $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                if ($p -and -not $p.HasExited) { $foundPids += $procId }
             }
         }
 
