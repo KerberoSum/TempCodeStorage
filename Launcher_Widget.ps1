@@ -163,79 +163,121 @@ function Save-Config {
 
 # Core Logic: Launch Target or Bring to Front
 function Activate-Target ($ctrlData) {
-    if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
-        # Already running: Bring to Front using VisualBasic AppActivate
-        foreach ($pid in $ctrlData.Pids) {
-            try { [Microsoft.VisualBasic.Interaction]::AppActivate($pid) } catch { }
-        }
-    } else {
-        # Not running: Launch new instance
-        $targetPath = $ctrlData.Item.Path
-        if (-not (Test-Path $targetPath)) {
-            [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
-            return
-        }
+    $targetPath = $ctrlData.Item.Path
+    if (-not $targetPath -or -not (Test-Path $targetPath)) {
+        [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
+        return
+    }
 
+    $activated = $false
+
+    # Attempt to bring existing instance to front
+    if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
+        foreach ($pid in $ctrlData.Pids) {
+            try {
+                $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
+                if ($p -and -not $p.HasExited) {
+                    [Microsoft.VisualBasic.Interaction]::AppActivate($pid)
+                    $activated = $true
+                    break
+                }
+            } catch { }
+        }
+    }
+
+    # If not already running or activation failed, launch a new process
+    if (-not $activated) {
         $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
         try {
+            $proc = $null
             if ($ext -eq ".ps1") {
-                Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath)
+                $proc = Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath) -PassThru
             } elseif ($ext -eq ".bat" -or $ext -eq ".cmd") {
-                Start-Process cmd -ArgumentList "/c `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath) -WindowStyle Hidden
+                $proc = Start-Process cmd -ArgumentList "/c `"$targetPath`"" -WorkingDirectory (Split-Path -Parent $targetPath) -WindowStyle Hidden -PassThru
             } else {
-                Start-Process $targetPath -WorkingDirectory (Split-Path -Parent $targetPath)
+                $proc = Start-Process $targetPath -WorkingDirectory (Split-Path -Parent $targetPath) -PassThru
+            }
+
+            if ($proc -and $proc.Id) {
+                if (-not $ctrlData.Pids) { $ctrlData.Pids = @() }
+                $ctrlData.Pids += $proc.Id
             }
         } catch {
             [System.Windows.MessageBox]::Show("Failed to launch file:`n$_", "Execution Error")
         }
     }
-    
-    # Check status quickly after launch
-    Start-Sleep -Milliseconds 500
+
+    Start-Sleep -Milliseconds 400
     Check-WidgetStatus
 }
 
-# Core Logic: Close/Kill Target
+# Core Logic: Close/Kill Target Process
 function Close-Target ($ctrlData) {
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
         foreach ($pid in $ctrlData.Pids) {
             Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
         }
     }
-    # Check status quickly after close
-    Start-Sleep -Milliseconds 500
+    
+    # Check if target is a batch/ps1 script and also kill related powershell process by script name
+    if ($ctrlData.Item.Path) {
+        $fileName = [System.IO.Path]::GetFileNameWithoutExtension($ctrlData.Item.Path)
+        $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
+        foreach ($p in $procs) {
+            if ($p.CommandLine -and $p.CommandLine.Contains($fileName) -and $p.ProcessId -ne $PID) {
+                Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Start-Sleep -Milliseconds 400
     Check-WidgetStatus
 }
 
-# Status Polling Engine: Checks what's running and updates tiles
+# Status Polling Engine: Checks running processes and updates tile colors
 function Check-WidgetStatus {
-    # Only fetch Process ID and CommandLine to keep it extremely fast and lightweight
-    $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='cmd.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
+    $myPid = $PID
     $bc = [System.Windows.Media.BrushConverter]::new()
 
     foreach ($ctrl in $global:tileControls) {
-        $path = $ctrl.Item.Path
-        $fileName = [System.IO.Path]::GetFileName($path)
-        $pids = @()
-        
-        # Match process command line to widget path/filename
-        foreach ($p in $procs) {
-            if ($p.CommandLine -and ($p.CommandLine -match [regex]::Escape($path) -or $p.CommandLine -match [regex]::Escape($fileName))) {
-                $pids += $p.ProcessId
+        $alivePids = @()
+
+        # 1. Check existing tracked PIDs
+        if ($ctrl.Pids) {
+            foreach ($pid in $ctrl.Pids) {
+                $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
+                if ($p -and -not $p.HasExited) {
+                    $alivePids += $pid
+                }
             }
         }
-        
-        $ctrl.Pids = $pids
-        
-        # UI Update based on running state
+
+        # 2. WMI command line match fallback if PID list empty
+        if ($alivePids.Count -eq 0 -and $ctrl.Item.Path -and (Test-Path $ctrl.Item.Path)) {
+            $path = $ctrl.Item.Path
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($path)
+            
+            $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='cmd.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
+            foreach ($p in $procs) {
+                if ($p.ProcessId -ne $myPid -and $p.CommandLine) {
+                    if ($p.CommandLine.Contains($baseName)) {
+                        $alivePids += $p.ProcessId
+                    }
+                }
+            }
+        }
+
+        $ctrl.Pids = $alivePids
+
+        # 3. Update Tile Colors in UI
         $window.Dispatcher.Invoke([Action]{
-            if ($pids.Count -gt 0) {
+            if ($alivePids.Count -gt 0) {
                 # Running = Green Highlight
                 $ctrl.Border.Background = $bc.ConvertFromString("#A6E3A1")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#11111B")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#11111B")
             } else {
-                # Not Running = Dark Default
+                # Not Running = Standard Dark
                 $ctrl.Border.Background = $bc.ConvertFromString("#181825")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
@@ -317,7 +359,6 @@ function Render-NormalView {
         $actBtn     = $parsedTile.FindName("ActivateBtn")
         $clsBtn     = $parsedTile.FindName("CloseBtn")
 
-        # Create control data package for state tracking
         $ctrlData = [PSCustomObject]@{
             Item     = $item
             Border   = $mainBdr
@@ -327,18 +368,17 @@ function Render-NormalView {
         }
         $global:tileControls.Add($ctrlData)
 
-        # Mouse Events for Hover
+        # Hover Events
         $mainBdr.Add_MouseEnter({ $overlay.Visibility = [System.Windows.Visibility]::Visible })
         $mainBdr.Add_MouseLeave({ $overlay.Visibility = [System.Windows.Visibility]::Collapsed })
 
-        # Button Click Events
+        # Click Events
         $actBtn.Add_Click({ Activate-Target $ctrlData })
         $clsBtn.Add_Click({ Close-Target $ctrlData })
 
         $tileWrapContainer.Children.Add($parsedTile) | Out-Null
     }
 
-    # Run an immediate check so tiles load with correct colors instantly
     Check-WidgetStatus
 }
 
@@ -436,7 +476,7 @@ function Render-BackstageView {
         $browseBtn.Tag = $pathBox
         $browseBtn.Add_Click({
             $ofd = New-Object System.Windows.Forms.OpenFileDialog
-            $ofd.Filter = "Script & Executable Files (*.bat;*.ps1;*.exe)|*.bat;*.ps1;*.exe|All Files (*.*)|*.*"
+            $ofd.Filter = "Script and Executable Files (*.bat;*.ps1;*.exe)|*.bat;*.ps1;*.exe|All Files (*.*)|*.*"
             if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 $this.Tag.Text = $ofd.FileName
             }
@@ -454,7 +494,7 @@ function Render-BackstageView {
     }
 }
 
-# Toggle Between Dashboard Mode and Backstage Mode
+# Toggle Dashboard Mode vs Backstage Mode
 $modeToggleBtn.Add_Click({
     $global:isBackstageMode = -not $global:isBackstageMode
     $bc = [System.Windows.Media.BrushConverter]::new()
