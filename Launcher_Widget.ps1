@@ -208,6 +208,7 @@ function Start-WidgetFile ($resolvedPath) {
 
     if ($ext -eq ".ps1") {
         $psi.FileName = "powershell.exe"
+        # NOTE: If you want to see the PowerShell window, change '-WindowStyle Hidden' to '-WindowStyle Normal'
         $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$resolvedPath`""
     } else {
         $psi.FileName = $resolvedPath
@@ -417,22 +418,25 @@ function Render-NormalView {
             Border   = $mainBdr
             IconTxt  = $iconTxt
             NameTxt  = $nameTxt
+            Overlay  = $overlay
             Pids     = @()
         }
         $global:tileControls.Add($ctrlData)
 
-        # Mouse Hover Events
-        $mainBdr.Add_MouseEnter({ $overlay.Visibility = [System.Windows.Visibility]::Visible })
-        $mainBdr.Add_MouseLeave({ $overlay.Visibility = [System.Windows.Visibility]::Collapsed })
+        # Store the data in the Tag property of the UI elements!
+        # This completely fixes the PowerShell closure bug where every button tries to open the last item.
+        $mainBdr.Tag = $ctrlData
+        $actBtn.Tag  = $ctrlData
+        $clsBtn.Tag  = $ctrlData
 
-        # Tile Body Click Action
-        $mainBdr.Add_MouseLeftButtonDown({
-            Activate-Target $ctrlData
-        })
+        # Mouse Hover Events using $this.Tag to prevent the same loop bug affecting hovers
+        $mainBdr.Add_MouseEnter({ $this.Tag.Overlay.Visibility = [System.Windows.Visibility]::Visible })
+        $mainBdr.Add_MouseLeave({ $this.Tag.Overlay.Visibility = [System.Windows.Visibility]::Collapsed })
 
-        # Overlay Button Actions
-        $actBtn.Add_Click({ Activate-Target $ctrlData })
-        $clsBtn.Add_Click({ Close-Target $ctrlData })
+        # Click Actions using $this.Tag 
+        $mainBdr.Add_MouseLeftButtonDown({ Activate-Target $this.Tag })
+        $actBtn.Add_Click({ Activate-Target $this.Tag })
+        $clsBtn.Add_Click({ Close-Target $this.Tag })
 
         $tileWrapContainer.Children.Add($parsedTile) | Out-Null
     }
