@@ -4,6 +4,8 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $win32Api = @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
+
 public class Win32Launcher {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     
@@ -25,8 +27,12 @@ public class Win32Launcher {
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
-    // This robustly finds the first visible window for a PID.
-    // Standard Get-Process often fails to find MainWindowHandle for WPF apps launched via hidden scripts.
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    
+    [DllImport("user32.dll")]
+    public static extern int GetWindowTextLength(IntPtr hWnd);
+
     public static IntPtr GetMainWindow(int pid) {
         IntPtr bestHandle = IntPtr.Zero;
         EnumWindows((hWnd, lParam) => {
@@ -34,17 +40,39 @@ public class Win32Launcher {
             GetWindowThreadProcessId(hWnd, out windowPid);
             if (windowPid == pid && IsWindowVisible(hWnd)) {
                 bestHandle = hWnd;
-                return false; // Stop enumerating once we find a visible window
+                return false; 
             }
             return true;
         }, IntPtr.Zero);
         return bestHandle;
     }
+
+    // NEW: Searches for any visible window that contains the button's name
+    public static int FindPidByTitleMatch(string titlePart) {
+        if (string.IsNullOrEmpty(titlePart)) return 0;
+        int outPid = 0;
+        EnumWindows((hWnd, lParam) => {
+            if (IsWindowVisible(hWnd)) {
+                int length = GetWindowTextLength(hWnd);
+                if (length > 0) {
+                    StringBuilder sb = new StringBuilder(length + 1);
+                    GetWindowText(hWnd, sb, sb.Capacity);
+                    if (sb.ToString().IndexOf(titlePart, StringComparison.OrdinalIgnoreCase) >= 0) {
+                        uint tempPid;
+                        GetWindowThreadProcessId(hWnd, out tempPid);
+                        outPid = (int)tempPid;
+                        return false; 
+                    }
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return outPid;
+    }
 }
 "@
 Add-Type -TypeDefinition $win32Api -ErrorAction SilentlyContinue
 
-# Ensure paths resolve to the script's exact directory
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $scriptDir) { $scriptDir = $PSScriptRoot }
 if (-not $scriptDir) { $scriptDir = [Environment]::CurrentDirectory }
@@ -207,14 +235,18 @@ function Start-WidgetFile ($resolvedPath) {
 
     if ($ext -eq ".ps1") {
         $psi.FileName = "powershell.exe"
-        $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$resolvedPath`""
+        $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Normal -File `"$resolvedPath`""
+        $psi.UseShellExecute = $false
+    } elseif ($ext -eq ".bat" -or $ext -eq ".cmd") {
+        $psi.FileName = "cmd.exe"
+        $psi.Arguments = "/c `"$resolvedPath`""
+        $psi.UseShellExecute = $false
     } else {
         $psi.FileName = $resolvedPath
+        $psi.UseShellExecute = $true
     }
 
     $psi.WorkingDirectory = Split-Path -Parent $resolvedPath
-    $psi.UseShellExecute = $true
-
     try { return [System.Diagnostics.Process]::Start($psi) } catch { return $null }
 }
 
@@ -223,27 +255,36 @@ function Activate-Target ($ctrlData) {
     if (-not $resolvedPath -or -not (Test-Path -LiteralPath $resolvedPath)) { return }
 
     $activated = $false
+    $myPid = $PID
 
-    # 1. Bring to front if already running
+    # 1. Bring to front if we already know the process ID
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
         foreach ($pid in $ctrlData.Pids) {
-            try {
-                $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
-                if ($p -and -not $p.HasExited) {
-                    # Use our C# function to find the actual window, bypassing Hidden PowerShell window issues
-                    $hwnd = [Win32Launcher]::GetMainWindow($pid)
-                    if ($hwnd -ne [IntPtr]::Zero) {
-                        if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
-                        [Win32Launcher]::SetForegroundWindow($hwnd)
-                        $activated = $true
-                        break
-                    }
-                }
-            } catch { }
+            $hwnd = [Win32Launcher]::GetMainWindow($pid)
+            if ($hwnd -ne [IntPtr]::Zero) {
+                if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
+                [Win32Launcher]::SetForegroundWindow($hwnd)
+                $activated = $true
+                break
+            }
         }
     }
 
-    # 2. Launch new instance ONLY if not already activated
+    # 2. If known PIDs failed, search for a window with the exact Button Name
+    if (-not $activated -and $ctrlData.Item.Name) {
+        $titlePid = [Win32Launcher]::FindPidByTitleMatch($ctrlData.Item.Name)
+        if ($titlePid -gt 0 -and $titlePid -ne $myPid) {
+            $hwnd = [Win32Launcher]::GetMainWindow($titlePid)
+            if ($hwnd -ne [IntPtr]::Zero) {
+                if ([Win32Launcher]::IsIconic($hwnd)) { [Win32Launcher]::ShowWindow($hwnd, 9) }
+                [Win32Launcher]::SetForegroundWindow($hwnd)
+                $activated = $true
+                if ($titlePid -notin $ctrlData.Pids) { $ctrlData.Pids += $titlePid }
+            }
+        }
+    }
+
+    # 3. Launch new instance ONLY if not already activated
     if (-not $activated) {
         $proc = Start-WidgetFile $resolvedPath
         if ($proc -and $proc.Id) {
@@ -256,12 +297,24 @@ function Activate-Target ($ctrlData) {
 }
 
 function Close-Target ($ctrlData) {
-    # Kill known PIDs
+    $myPid = $PID
+
+    # 1. Kill known PIDs and their children using Taskkill
     if ($ctrlData.Pids) {
-        foreach ($pid in $ctrlData.Pids) { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue }
+        foreach ($pid in $ctrlData.Pids) { 
+            if ($pid -ne $myPid) { & taskkill.exe /PID $pid /T /F 2>$null }
+        }
     }
     
-    # Sweep for orphaned processes based on the file name/type
+    # 2. Sweep by Window Title Match (kills child processes that detached)
+    if ($ctrlData.Item.Name) {
+        $titlePid = [Win32Launcher]::FindPidByTitleMatch($ctrlData.Item.Name)
+        if ($titlePid -gt 0 -and $titlePid -ne $myPid) {
+            & taskkill.exe /PID $titlePid /T /F 2>$null
+        }
+    }
+    
+    # 3. Fallback Sweep by script filename
     $resolvedPath = Resolve-WidgetPath $ctrlData.Item.Path
     if ($resolvedPath -and (Test-Path -LiteralPath $resolvedPath)) {
         $ext = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
@@ -272,8 +325,8 @@ function Close-Target ($ctrlData) {
         } else {
             $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='cmd.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
             foreach ($p in $procs) {
-                if ($p.ProcessId -ne $PID -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
-                    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+                if ($p.ProcessId -ne $myPid -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
+                    & taskkill.exe /PID $p.ProcessId /T /F 2>$null
                 }
             }
         }
@@ -291,7 +344,7 @@ function Check-WidgetStatus {
     foreach ($ctrl in $global:tileControls) {
         $foundPids = @()
 
-        # Check existing PIDs first
+        # 1. Check if explicitly tracked PIDs are still alive
         if ($ctrl.Pids) {
             foreach ($pid in $ctrl.Pids) {
                 $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
@@ -299,26 +352,15 @@ function Check-WidgetStatus {
             }
         }
 
-        # Scan for orphaned instances by name if not found
-        $resolvedPath = Resolve-WidgetPath $ctrl.Item.Path
-        if ($foundPids.Count -eq 0 -and $resolvedPath -and (Test-Path -LiteralPath $resolvedPath)) {
-            $ext = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
-            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedPath)
-            
-            if ($ext -eq ".exe") {
-                $procs = Get-Process -Name $baseName -ErrorAction SilentlyContinue
-                if ($procs) { foreach ($p in $procs) { $foundPids += $p.Id } }
-            } else {
-                $wmiProcs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='cmd.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
-                foreach ($p in $wmiProcs) {
-                    if ($p.ProcessId -ne $myPid -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
-                        $foundPids += $p.ProcessId
-                    }
-                }
+        # 2. Check if a window exists matching the button name
+        if ($foundPids.Count -eq 0 -and $ctrl.Item.Name) {
+            $titlePid = [Win32Launcher]::FindPidByTitleMatch($ctrl.Item.Name)
+            if ($titlePid -gt 0 -and $titlePid -ne $myPid) {
+                $foundPids += $titlePid
             }
         }
 
-        # Keep PIDs unique
+        # Keep unique PIDs
         $uniquePids = @()
         foreach ($p in $foundPids) { if ($p -notin $uniquePids) { $uniquePids += $p } }
         $ctrl.Pids = $uniquePids
@@ -333,7 +375,6 @@ function Check-WidgetStatus {
                 $ctrl.Border.Background = $bc.ConvertFromString("#181825")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
-                # Hide overlay if widget closes while hovering
                 $ctrl.Overlay.Visibility = [System.Windows.Visibility]::Collapsed
             }
         }) | Out-Null
