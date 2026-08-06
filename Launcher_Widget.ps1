@@ -1,5 +1,20 @@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, Microsoft.VisualBasic
 
+# Native Win32 API for reliable window restoration and focus
+$win32Api = @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Focus {
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(IntPtr hWnd);
+}
+"@
+Add-Type -TypeDefinition $win32Api -ErrorAction SilentlyContinue
+
 # Ensure paths resolve to the script's exact directory
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $scriptDir) { $scriptDir = $PSScriptRoot }
@@ -49,7 +64,7 @@ $xaml = @'
                         BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,6,0" Cursor="Hand" DockPanel.Dock="Left">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}" Cursor="Hand">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                         </ControlTemplate>
@@ -60,7 +75,7 @@ $xaml = @'
                         BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Cursor="Hand" DockPanel.Dock="Left">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}" Cursor="Hand">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                         </ControlTemplate>
@@ -84,7 +99,7 @@ $xaml = @'
                         <Button Name="AddTileBtn" Content="+ Add New Widget Launcher" Foreground="#11111B" Background="#A6E3A1" BorderThickness="0" FontWeight="Bold" FontSize="12" Padding="0,7" Margin="0,10,0,0" Cursor="Hand">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
-                                    <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}" Cursor="Hand">
                                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
                                 </ControlTemplate>
@@ -99,7 +114,7 @@ $xaml = @'
                 <Button Name="StartupBtn" Content="🚀 Startup: OFF" Foreground="#BAC2DE" Background="#313244" BorderThickness="0" FontSize="11" Padding="8,4" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}" Cursor="Hand">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                         </ControlTemplate>
@@ -161,6 +176,18 @@ function Save-Config {
     } catch { }
 }
 
+# Win32 Helper: Force Window to Front
+function Set-WindowToFront ($hwnd) {
+    if ($hwnd -and $hwnd -ne [IntPtr]::Zero) {
+        try {
+            if ([Win32Focus]::IsIconic($hwnd)) {
+                [Win32Focus]::ShowWindow($hwnd, 9) # SW_RESTORE
+            }
+            [Win32Focus]::SetForegroundWindow($hwnd)
+        } catch { }
+    }
+}
+
 # Core Logic: Launch Target or Bring to Front
 function Activate-Target ($ctrlData) {
     $targetPath = $ctrlData.Item.Path
@@ -171,21 +198,27 @@ function Activate-Target ($ctrlData) {
 
     $activated = $false
 
-    # Attempt to bring existing instance to front
+    # 1. Attempt to bring existing active process window to front
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
         foreach ($pid in $ctrlData.Pids) {
             try {
                 $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
                 if ($p -and -not $p.HasExited) {
-                    [Microsoft.VisualBasic.Interaction]::AppActivate($pid)
-                    $activated = $true
-                    break
+                    if ($p.MainWindowHandle -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
+                        Set-WindowToFront $p.MainWindowHandle
+                        $activated = $true
+                        break
+                    } else {
+                        [Microsoft.VisualBasic.Interaction]::AppActivate($pid)
+                        $activated = $true
+                        break
+                    }
                 }
             } catch { }
         }
     }
 
-    # If not already running or activation failed, launch a new process
+    # 2. If not running, launch a new process
     if (-not $activated) {
         $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
         try {
@@ -207,11 +240,11 @@ function Activate-Target ($ctrlData) {
         }
     }
 
-    Start-Sleep -Milliseconds 400
+    Start-Sleep -Milliseconds 300
     Check-WidgetStatus
 }
 
-# Core Logic: Close/Kill Target Process
+# Core Logic: Close Target Process
 function Close-Target ($ctrlData) {
     if ($ctrlData.Pids -and $ctrlData.Pids.Count -gt 0) {
         foreach ($pid in $ctrlData.Pids) {
@@ -219,22 +252,22 @@ function Close-Target ($ctrlData) {
         }
     }
     
-    # Check if target is a batch/ps1 script and also kill related powershell process by script name
+    # Also search by script filename if launched via batch wrapper
     if ($ctrlData.Item.Path) {
-        $fileName = [System.IO.Path]::GetFileNameWithoutExtension($ctrlData.Item.Path)
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($ctrlData.Item.Path)
         $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
         foreach ($p in $procs) {
-            if ($p.CommandLine -and $p.CommandLine.Contains($fileName) -and $p.ProcessId -ne $PID) {
+            if ($p.ProcessId -ne $PID -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
                 Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
-    Start-Sleep -Milliseconds 400
+    Start-Sleep -Milliseconds 300
     Check-WidgetStatus
 }
 
-# Status Polling Engine: Checks running processes and updates tile colors
+# Status Polling Engine: Checks process states & sets green highlights
 function Check-WidgetStatus {
     $myPid = $PID
     $bc = [System.Windows.Media.BrushConverter]::new()
@@ -242,7 +275,7 @@ function Check-WidgetStatus {
     foreach ($ctrl in $global:tileControls) {
         $alivePids = @()
 
-        # 1. Check existing tracked PIDs
+        # Check explicit tracked PIDs
         if ($ctrl.Pids) {
             foreach ($pid in $ctrl.Pids) {
                 $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
@@ -252,7 +285,7 @@ function Check-WidgetStatus {
             }
         }
 
-        # 2. WMI command line match fallback if PID list empty
+        # WMI fallback match
         if ($alivePids.Count -eq 0 -and $ctrl.Item.Path -and (Test-Path $ctrl.Item.Path)) {
             $path = $ctrl.Item.Path
             $baseName = [System.IO.Path]::GetFileNameWithoutExtension($path)
@@ -269,15 +302,15 @@ function Check-WidgetStatus {
 
         $ctrl.Pids = $alivePids
 
-        # 3. Update Tile Colors in UI
+        # Update UI Colors
         $window.Dispatcher.Invoke([Action]{
             if ($alivePids.Count -gt 0) {
-                # Running = Green Highlight
+                # Active = Bright Green Highlight
                 $ctrl.Border.Background = $bc.ConvertFromString("#A6E3A1")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#11111B")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#11111B")
             } else {
-                # Not Running = Standard Dark
+                # Closed = Standard Dark Mode
                 $ctrl.Border.Background = $bc.ConvertFromString("#181825")
                 $ctrl.NameTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
                 $ctrl.IconTxt.Foreground = $bc.ConvertFromString("#CDD6F4")
@@ -286,7 +319,7 @@ function Check-WidgetStatus {
     }
 }
 
-# Render Normal View Tiles (2 Per Row + Hover Overlay)
+# Render Normal View Tiles (2 Per Row + Interactive Overlay)
 function Render-NormalView {
     $tileWrapContainer.Children.Clear()
     $global:tileControls.Clear()
@@ -307,19 +340,19 @@ function Render-NormalView {
     foreach ($item in $global:launcherItems) {
         $tileXaml = @"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Name="MainBorder" Background="#181825" CornerRadius="12" Margin="4" Height="85">
+        Name="MainBorder" Background="#181825" CornerRadius="12" Margin="4" Height="85" Cursor="Hand">
     <Border.Effect>
         <DropShadowEffect BlurRadius="8" Color="#000000" Opacity="0.3" ShadowDepth="2"/>
     </Border.Effect>
-    <Grid>
-        <!-- Normal Content -->
-        <StackPanel VerticalAlignment="Center">
+    <Grid Name="TileGrid">
+        <!-- Main Tile Content -->
+        <StackPanel VerticalAlignment="Center" IsHitTestVisible="False">
             <TextBlock Name="IconTxt" Text="$($item.Icon)" FontSize="24" HorizontalAlignment="Center"/>
             <TextBlock Name="NameTxt" Text="$($item.Name)" FontSize="12" FontWeight="Bold" Foreground="#CDD6F4" HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
         </StackPanel>
         
         <!-- Hover Overlay -->
-        <Border Name="OverlayBorder" Background="#E61E1E2E" CornerRadius="12" Visibility="Collapsed">
+        <Border Name="OverlayBorder" Background="#F01E1E2E" CornerRadius="12" Visibility="Collapsed" Cursor="Hand">
             <Grid Margin="6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -329,17 +362,17 @@ function Render-NormalView {
                 <Button Name="ActivateBtn" Grid.Column="0" Content="▶ Show" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" FontSize="11" Margin="0,0,3,0" BorderThickness="0" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Cursor="Hand">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
                 
-                <Button Name="CloseBtn" Grid.Column="1" Content="✕ Close" Background="#E64553" Foreground="#11111B" FontWeight="Bold" FontSize="11" Margin="3,0,0,0" BorderThickness="0" Cursor="Hand">
+                <Button Name="CloseBtn" Grid.Column="1" Content="✕ Close" Background="#E64553" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" Margin="3,0,0,0" BorderThickness="0" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Cursor="Hand">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                         </ControlTemplate>
@@ -368,11 +401,11 @@ function Render-NormalView {
         }
         $global:tileControls.Add($ctrlData)
 
-        # Hover Events
+        # Mouse Hover Controls
         $mainBdr.Add_MouseEnter({ $overlay.Visibility = [System.Windows.Visibility]::Visible })
         $mainBdr.Add_MouseLeave({ $overlay.Visibility = [System.Windows.Visibility]::Collapsed })
 
-        # Click Events
+        # Click Event Actions
         $actBtn.Add_Click({ Activate-Target $ctrlData })
         $clsBtn.Add_Click({ Close-Target $ctrlData })
 
@@ -494,7 +527,7 @@ function Render-BackstageView {
     }
 }
 
-# Toggle Dashboard Mode vs Backstage Mode
+# Toggle Between Dashboard Mode and Backstage Mode
 $modeToggleBtn.Add_Click({
     $global:isBackstageMode = -not $global:isBackstageMode
     $bc = [System.Windows.Media.BrushConverter]::new()
@@ -581,9 +614,9 @@ $headerGrid.Add_MouseDown({
 $minBtn.Add_Click({ $window.WindowState = [System.Windows.WindowState]::Minimized })
 $closeBtn.Add_Click({ $window.Close() })
 
-# Background Alert Timer for Process Tracking (Checks every 3 seconds)
+# Background Process Status Timer (Checks every 2 seconds)
 $statusTimer = New-Object System.Windows.Threading.DispatcherTimer
-$statusTimer.Interval = [TimeSpan]::FromSeconds(3)
+$statusTimer.Interval = [TimeSpan]::FromSeconds(2)
 $statusTimer.Add_Tick({ if (-not $global:isBackstageMode) { Check-WidgetStatus } })
 
 # Initialization Sequence
