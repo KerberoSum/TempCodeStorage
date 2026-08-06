@@ -1,6 +1,6 @@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, Microsoft.VisualBasic
 
-# Native Win32 API for reliable window restoration and focus
+# Native Win32 API for window restoration and focus
 $win32Api = @"
 using System;
 using System.Runtime.InteropServices;
@@ -22,6 +22,31 @@ if (-not $scriptDir) { $scriptDir = [Environment]::CurrentDirectory }
 
 $configPath = Join-Path $scriptDir "Launcher_Config.csv"
 $startupShortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WidgetControlPanel.lnk"
+
+# Robust Path Resolver: Handles Quotes, Relative Paths, and Literal Paths
+function Resolve-WidgetPath ($rawPath) {
+    if (-not $rawPath) { return "" }
+    
+    # Clean whitespace and surrounding quotes
+    $clean = $rawPath.Trim().Trim('"', "'").Trim()
+    if (-not $clean) { return "" }
+
+    # 1. Check relative path against script directory
+    if (-not [System.IO.Path]::IsPathRooted($clean)) {
+        $combined = Join-Path $scriptDir $clean
+        if (Test-Path -LiteralPath $combined) {
+            return (Get-Item -LiteralPath $combined).FullName
+        }
+    }
+
+    # 2. Check as absolute literal path
+    if (Test-Path -LiteralPath $clean) {
+        return (Get-Item -LiteralPath $clean).FullName
+    }
+
+    # Return cleaned path if not found (will trigger error message)
+    return $clean
+}
 
 # Main Launcher Window XAML
 $xaml = @'
@@ -153,7 +178,7 @@ $global:isBackstageMode = $false
 
 # Load Config
 function Load-Config {
-    if (-not (Test-Path $configPath)) {
+    if (-not (Test-Path -LiteralPath $configPath)) {
         $defaultPath = Join-Path $scriptDir "RunWidget.bat"
         $defaultItems = @(
             [PSCustomObject]@{ Id = [Guid]::NewGuid().ToString(); Name = "Daily Assistant"; Path = $defaultPath; Icon = "⚡" }
@@ -177,23 +202,18 @@ function Save-Config {
 }
 
 # Windows Shell Execution Helper
-function Start-WidgetFile ($targetPath) {
-    if (-not (Test-Path $targetPath)) {
-        [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
-        return $null
-    }
-
-    $ext = [System.IO.Path]::GetExtension($targetPath).ToLower()
+function Start-WidgetFile ($resolvedPath) {
+    $ext = [System.IO.Path]::GetExtension($resolvedPath).ToLower()
     $psi = New-Object System.Diagnostics.ProcessStartInfo
 
     if ($ext -eq ".ps1") {
         $psi.FileName = "powershell.exe"
-        $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$targetPath`""
+        $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$resolvedPath`""
     } else {
-        $psi.FileName = $targetPath
+        $psi.FileName = $resolvedPath
     }
 
-    $psi.WorkingDirectory = Split-Path -Parent $targetPath
+    $psi.WorkingDirectory = Split-Path -Parent $resolvedPath
     $psi.UseShellExecute = $true
 
     try {
@@ -206,9 +226,10 @@ function Start-WidgetFile ($targetPath) {
 
 # Core Logic: Launch Target or Bring Window to Front
 function Activate-Target ($ctrlData) {
-    $targetPath = $ctrlData.Item.Path
-    if (-not $targetPath -or -not (Test-Path $targetPath)) {
-        [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$targetPath", "File Not Found")
+    $resolvedPath = Resolve-WidgetPath $ctrlData.Item.Path
+
+    if (-not $resolvedPath -or -not (Test-Path -LiteralPath $resolvedPath)) {
+        [System.Windows.MessageBox]::Show("Specified file path does not exist:`n$($ctrlData.Item.Path)", "File Not Found Error")
         return
     }
 
@@ -233,9 +254,9 @@ function Activate-Target ($ctrlData) {
         }
     }
 
-    # 2. Launch new instance if not currently active or activation failed
+    # 2. Launch new instance if not active
     if (-not $activated) {
-        $proc = Start-WidgetFile $targetPath
+        $proc = Start-WidgetFile $resolvedPath
         if ($proc -and $proc.Id) {
             if (-not $ctrlData.Pids) { $ctrlData.Pids = @() }
             $ctrlData.Pids += $proc.Id
@@ -254,9 +275,9 @@ function Close-Target ($ctrlData) {
         }
     }
     
-    # Also search processes by target filename
-    if ($ctrlData.Item.Path -and (Test-Path $ctrlData.Item.Path)) {
-        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($ctrlData.Item.Path)
+    $resolvedPath = Resolve-WidgetPath $ctrlData.Item.Path
+    if ($resolvedPath -and (Test-Path -LiteralPath $resolvedPath)) {
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedPath)
         $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
         foreach ($p in $procs) {
             if ($p.ProcessId -ne $PID -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
@@ -288,8 +309,9 @@ function Check-WidgetStatus {
         }
 
         # Check background script process match
-        if ($alivePids.Count -eq 0 -and $ctrl.Item.Path -and (Test-Path $ctrl.Item.Path)) {
-            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($ctrl.Item.Path)
+        $resolvedPath = Resolve-WidgetPath $ctrl.Item.Path
+        if ($alivePids.Count -eq 0 -and $resolvedPath -and (Test-Path -LiteralPath $resolvedPath)) {
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedPath)
             $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -Property ProcessId, CommandLine -ErrorAction SilentlyContinue
             foreach ($p in $procs) {
                 if ($p.ProcessId -ne $myPid -and $p.CommandLine -and $p.CommandLine.Contains($baseName)) {
@@ -317,7 +339,7 @@ function Check-WidgetStatus {
     }
 }
 
-# Render Normal View Tiles (2 Per Row + Overlay Controls)
+# Render Normal View Tiles (2 Per Row + Interactive Overlay)
 function Render-NormalView {
     $tileWrapContainer.Children.Clear()
     $global:tileControls.Clear()
@@ -399,11 +421,11 @@ function Render-NormalView {
         }
         $global:tileControls.Add($ctrlData)
 
-        # Mouse Hover Controls
+        # Mouse Hover Events
         $mainBdr.Add_MouseEnter({ $overlay.Visibility = [System.Windows.Visibility]::Visible })
         $mainBdr.Add_MouseLeave({ $overlay.Visibility = [System.Windows.Visibility]::Collapsed })
 
-        # Left Click directly on tile body launches or shows widget
+        # Tile Body Click Action
         $mainBdr.Add_MouseLeftButtonDown({
             Activate-Target $ctrlData
         })
@@ -557,7 +579,7 @@ $addTileBtn.Add_Click({
     $newItem = [PSCustomObject]@{
         Id   = [Guid]::NewGuid().ToString()
         Name = "New Widget"
-        Path = "C:\Path\To\Widget.bat"
+        Path = "RunWidget.bat"
         Icon = "🚀"
     }
     $global:launcherItems.Add($newItem)
@@ -579,7 +601,7 @@ function Update-PinStatus {
 
 function Update-StartupStatus {
     $bc = [System.Windows.Media.BrushConverter]::new()
-    if (Test-Path $startupShortcut) {
+    if (Test-Path -LiteralPath $startupShortcut) {
         $startupBtn.Content = "🚀 Startup: ON"
         $startupBtn.Background = $bc.ConvertFromString("#A6E3A1")
         $startupBtn.Foreground = $bc.ConvertFromString("#11111B")
@@ -596,8 +618,8 @@ $pinBtn.Add_Click({
 })
 
 $startupBtn.Add_Click({
-    if (Test-Path $startupShortcut) {
-        Remove-Item $startupShortcut -Force
+    if (Test-Path -LiteralPath $startupShortcut) {
+        Remove-Item -LiteralPath $startupShortcut -Force
     } else {
         $batPath = Join-Path $scriptDir "RunLauncher.bat"
         $wsh = New-Object -ComObject WScript.Shell
