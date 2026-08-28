@@ -2057,31 +2057,52 @@ $calCtrl.Add_SelectedDatesChanged({
 })
 
 # Time Step Controls
-$timeStepModeBtn.Add_Click({
-    if ($global:timeStepMode -eq "1h") { $global:timeStepMode = "5m" } else { $global:timeStepMode = "1h" }
+$timeStepModes = @("5m", "15m", "30m", "1h")
+
+$setTimeStepMode = {
+    param([string]$mode)
+
+    if ($timeStepModes -notcontains $mode) {
+        $mode = "1h"
+    }
+
+    $global:timeStepMode = $mode
     $timeStepModeBtn.Content = $global:timeStepMode
+}
+
+$timeStepModeBtn.Add_Click({
+    $currentIndex = [Array]::IndexOf($timeStepModes, $global:timeStepMode)
+    if ($currentIndex -lt 0) {
+        $currentIndex = [Array]::IndexOf($timeStepModes, "1h")
+    }
+
+    $nextIndex = ($currentIndex + 1) % $timeStepModes.Count
+    & $setTimeStepMode $timeStepModes[$nextIndex]
 })
 
-function Adjust-Time ($direction) {
-    $currentTime = [DateTime]::Now
-    [void][DateTime]::TryParseExact($timeInput.Text, "HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
-    
-    if ($global:timeStepMode -eq "1h") {
-        $currentTime = $currentTime.AddHours($direction)
-    } else {
-        $m = $currentTime.Minute
-        $rem = $m % 5
-        if ($direction -gt 0) {
-            $add = if ($rem -ne 0) { 5 - $rem } else { 5 }
-            $currentTime = $currentTime.AddMinutes($add)
-        } else {
-            $sub = if ($rem -ne 0) { $rem } else { 5 }
-            $currentTime = $currentTime.AddMinutes(-$sub)
-        }
+function Get-TimeStepMinutes {
+    switch ($global:timeStepMode) {
+        "5m"  { return 5 }
+        "15m" { return 15 }
+        "30m" { return 30 }
+        "1h"  { return 60 }
+        default { return 60 }
     }
+}
+
+function Adjust-Time ([int]$direction) {
+    $currentTime = [DateTime]::Now
+    $timeText = if ($null -ne $timeInput.Text) { $timeInput.Text.Trim() } else { "" }
+
+    if (-not [DateTime]::TryParseExact($timeText, "HH:mm", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)) {
+        $currentTime = Get-Date
+    }
+
+    $currentTime = $currentTime.AddMinutes($direction * (Get-TimeStepMinutes))
     $timeInput.Text = $currentTime.ToString("HH:mm")
 }
 
+& $setTimeStepMode $global:timeStepMode
 $timeMinusBtn.Add_Click({ Adjust-Time -1 })
 $timePlusBtn.Add_Click({ Adjust-Time 1 })
 
