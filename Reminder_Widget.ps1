@@ -411,13 +411,14 @@ function Get-Palette {
     }
 }
 
-# Task Filtering Helper
+# Task Filtering Helper (Supports Tags + Keyword Search across Description, Location, and Remarks)
 function Get-FilteredTasks {
     $active = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
     
     return $active | Where-Object {
         $item = $_
         
+        # 1. Tag Filter
         if ($global:filterTagIds.Count -gt 0) {
             if (-not $item.Tags) { return $false }
             $itemTagIds = $item.Tags.Split(';')
@@ -428,18 +429,21 @@ function Get-FilteredTasks {
             if (-not $tagMatch) { return $false }
         }
 
+        # 2. Description Keyword Search
         if ($global:filterDesc -and $global:filterDesc.Trim() -ne "") {
             if (-not $item.Description -or ($item.Description.IndexOf($global:filterDesc.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
                 return $false
             }
         }
 
+        # 3. Location Keyword Search
         if ($global:filterLoc -and $global:filterLoc.Trim() -ne "") {
             if (-not $item.Location -or ($item.Location.IndexOf($global:filterLoc.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
                 return $false
             }
         }
 
+        # 4. Remarks Keyword Search
         if ($global:filterRem -and $global:filterRem.Trim() -ne "") {
             if (-not $item.Remarks -or ($item.Remarks.IndexOf($global:filterRem.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
                 return $false
@@ -734,7 +738,7 @@ function Reset-Inputs {
     $selectTagsBtn.Content = "🏷️ Select Tags (0)"
 }
 
-# Tag Filter Dialog
+# Tag Filter Dialog (With Description, Location, and Remarks Search)
 function Open-FilterDialog {
     $fltXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -749,10 +753,11 @@ function Open-FilterDialog {
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             
-            <TextBlock Grid.Row="0" Text="🔍 Filter and Search Entries" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBlock Grid.Row="0" Text="🔍 Filter &amp; Search Entries" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
 
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
+                    <!-- Keyword Search Section -->
                     <TextBlock Text="Keyword Search:" Foreground="#89B4FA" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
 
                     <TextBlock Text="Description contains:" Foreground="#A6ADC8" FontSize="11" Margin="0,0,0,2"/>
@@ -766,6 +771,7 @@ function Open-FilterDialog {
 
                     <Border BorderBrush="#313244" BorderThickness="0,1,0,0" Margin="0,2,0,8"/>
 
+                    <!-- Tag Filter Section -->
                     <TextBlock Text="Filter by Tags:" Foreground="#89B4FA" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
                     <StackPanel Name="FLTStack"/>
                 </StackPanel>
@@ -791,6 +797,7 @@ function Open-FilterDialog {
     $fltClearBtn = $fltWin.FindName('FLTClearBtn')
     $fltApplyBtn = $fltWin.FindName('FLTApplyBtn')
 
+    # Pre-fill existing keyword searches
     $fltDesc.Text = $global:filterDesc
     $fltLoc.Text  = $global:filterLoc
     $fltRem.Text  = $global:filterRem
@@ -817,7 +824,7 @@ function Open-FilterDialog {
             } else {
                 $localFilterIds.Remove($this.Tag) | Out-Null
             }
-        }.GetNewClosure())
+        })
 
         $fltStack.Children.Add($cb) | Out-Null
     }
@@ -871,7 +878,7 @@ function Refresh-InputTagSelector {
                 $global:selectedTagIds.Remove($this.Tag) | Out-Null
             }
             $selectTagsBtn.Content = "🏷️ Select Tags (" + $global:selectedTagIds.Count + ")"
-        }.GetNewClosure())
+        })
 
         $tagCheckboxContainer.Children.Add($cb) | Out-Null
     }
@@ -951,7 +958,7 @@ function Open-EditTagDialog ($tag) {
         $btn.BorderThickness = 0
         $btn.Cursor = [System.Windows.Input.Cursors]::Hand
         $btn.Tag = $hex
-        $btn.Add_Click({ $etColor.Text = $this.Tag }.GetNewClosure())
+        $btn.Add_Click({ $etColor.Text = $this.Tag })
         $etSwatchPanel.Children.Add($btn) | Out-Null
     }
 
@@ -961,7 +968,7 @@ function Open-EditTagDialog ($tag) {
             $hex = "#" + $cd.Color.R.ToString("X2") + $cd.Color.G.ToString("X2") + $cd.Color.B.ToString("X2")
             $etColor.Text = $hex
         }
-    }.GetNewClosure())
+    })
 
     $etCancelBtn.Add_Click({ $etWin.Close() })
 
@@ -974,7 +981,7 @@ function Open-EditTagDialog ($tag) {
             Render-CustomCalendar
         }
         $etWin.Close()
-    }.GetNewClosure())
+    })
 
     $etWin.ShowDialog() | Out-Null
 }
@@ -1002,7 +1009,7 @@ function Open-TagManager {
                 <StackPanel Name="TMTagStack"/>
             </ScrollViewer>
 
-            <!-- New Tag Inputs and Color Palette -->
+            <!-- New Tag Inputs & Color Palette -->
             <StackPanel Grid.Row="2" Margin="0,0,0,10">
                 <Grid Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
@@ -1047,7 +1054,7 @@ function Open-TagManager {
         $btn.Tag = $hex
         $btn.Add_Click({
             $tmColor.Text = $this.Tag
-        }.GetNewClosure())
+        })
         $tmSwatchPanel.Children.Add($btn) | Out-Null
     }
 
@@ -1057,7 +1064,7 @@ function Open-TagManager {
             $hex = "#" + $cd.Color.R.ToString("X2") + $cd.Color.G.ToString("X2") + $cd.Color.B.ToString("X2")
             $tmColor.Text = $hex
         }
-    }.GetNewClosure())
+    })
 
     $renderTMList = {
         $tmStack.Children.Clear()
@@ -1093,7 +1100,7 @@ function Open-TagManager {
                 & $renderTMList
                 Render-Cards
                 Render-CustomCalendar
-            }.GetNewClosure())
+            })
 
             $editBtn = New-Object System.Windows.Controls.Button
             $editBtn.Content = "✏️"
@@ -1107,7 +1114,7 @@ function Open-TagManager {
             $editBtn.Add_Click({
                 Open-EditTagDialog $this.Tag
                 & $renderTMList
-            }.GetNewClosure())
+            })
 
             $pill = New-Object System.Windows.Controls.Border
             $pill.CornerRadius = New-Object System.Windows.CornerRadius(6)
@@ -1145,7 +1152,7 @@ function Open-TagManager {
             & $renderTMList
             Render-Cards
         }
-    }.GetNewClosure())
+    })
 
     $tmCloseBtn.Add_Click({ $tmWin.Close() })
     $tmWin.ShowDialog() | Out-Null
@@ -1158,7 +1165,7 @@ function Open-RoutineGenerator {
     $rgXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Batch and Routine Generator" Height="550" Width="400" WindowStyle="None" 
+        Title="Batch &amp; Routine Generator" Height="550" Width="400" WindowStyle="None" 
         AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
     <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
         <Grid Margin="16">
@@ -1168,7 +1175,7 @@ function Open-RoutineGenerator {
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             
-            <TextBlock Grid.Row="0" Text="🔄 Batch and Routine Generator" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBlock Grid.Row="0" Text="🔄 Batch &amp; Routine Generator" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
 
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
@@ -1272,11 +1279,11 @@ function Open-RoutineGenerator {
                     $script:rgSelectedTagIds.Remove($this.Tag) | Out-Null
                 }
                 $rgSelectTagsBtn.Content = "🏷️ Select Tags (" + $script:rgSelectedTagIds.Count + ")"
-            }.GetNewClosure())
+            })
             $rgTagCheckboxContainer.Children.Add($cb) | Out-Null
         }
         $rgTagPopup.IsOpen = $true
-    }.GetNewClosure())
+    })
 
     $rgCombo.Add_SelectionChanged({
         if ($rgCombo.SelectedIndex -eq 0) {
@@ -1293,7 +1300,7 @@ function Open-RoutineGenerator {
             $rgRuleHint.Text = "Days of Month (e.g. 1, 15, 30 | separated by commas):"
             $rgRuleVal.Text = "1, 15"
         }
-    }.GetNewClosure())
+    })
 
     $rgCancelBtn.Add_Click({ $rgWin.Close() })
 
@@ -1356,14 +1363,14 @@ function Open-RoutineGenerator {
             Render-Cards
             $rgWin.Close()
         }
-    }.GetNewClosure())
+    })
 
     $rgWin.ShowDialog() | Out-Null
 }
 
 $batchGenBtn.Add_Click({ Open-RoutineGenerator })
 
-# Day Overview Window
+# Day Overview Window (With Full Card Action Capabilities)
 function Open-DayOverview ($dateStr) {
     $doXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1412,6 +1419,7 @@ function Open-DayOverview ($dateStr) {
             $doStack.Children.Add($emptyText) | Out-Null
         } else {
             foreach ($item in $dayTasks) {
+                # Render Full Action Card
                 $card = New-Object System.Windows.Controls.Border
                 $card.CornerRadius = New-Object System.Windows.CornerRadius(10)
                 $card.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
@@ -1426,6 +1434,7 @@ function Open-DayOverview ($dateStr) {
                 $grid.ColumnDefinitions.Add($colContent)
                 $grid.ColumnDefinitions.Add($colBtns)
 
+                # Info Stack
                 $contentStack = New-Object System.Windows.Controls.StackPanel
                 [System.Windows.Controls.Grid]::SetColumn($contentStack, 0)
 
@@ -1451,10 +1460,12 @@ function Open-DayOverview ($dateStr) {
                     $contentStack.Children.Add($locText) | Out-Null
                 }
 
+                # Buttons Panel
                 $btnStack = New-Object System.Windows.Controls.StackPanel
                 $btnStack.Orientation = [System.Windows.Controls.Orientation]::Horizontal
                 [System.Windows.Controls.Grid]::SetColumn($btnStack, 1)
 
+                # Edit Button
                 $editBtn = New-Object System.Windows.Controls.Button
                 $editBtn.Content = "✏️"
                 $editBtn.Foreground = $bc.ConvertFromString("#CDD6F4")
@@ -1469,8 +1480,9 @@ function Open-DayOverview ($dateStr) {
                     & $renderDayStack
                     Render-Cards
                     Render-CustomCalendar
-                }.GetNewClosure())
+                })
 
+                # Delete Button
                 $delBtn = New-Object System.Windows.Controls.Button
                 $delBtn.Content = "🗑"
                 $delBtn.Foreground = $bc.ConvertFromString("#E64553")
@@ -1485,7 +1497,7 @@ function Open-DayOverview ($dateStr) {
                     & $renderDayStack
                     Render-Cards
                     Render-CustomCalendar
-                }.GetNewClosure())
+                })
 
                 $btnStack.Children.Add($editBtn) | Out-Null
                 $btnStack.Children.Add($delBtn) | Out-Null
@@ -1508,7 +1520,6 @@ function Open-DayOverview ($dateStr) {
 $viewToggleBtn.Add_Click({
     $global:isCalendarView = -not $global:isCalendarView
     if ($global:isCalendarView) {
-        $global:calDisplayDate = Get-Date
         $feedScrollViewer.Visibility = [System.Windows.Visibility]::Collapsed
         $calendarViewContainer.Visibility = [System.Windows.Visibility]::Visible
         $viewToggleBtn.Content = "📋 Feed View"
@@ -1606,11 +1617,11 @@ function Open-EditDialog ($task) {
 '@
     $editWin = [System.Windows.Markup.XamlReader]::Parse($editXaml)
 
-    $script:eDesc = $editWin.FindName('EDesc')
-    $script:eLoc = $editWin.FindName('ELoc')
-    $script:eRem = $editWin.FindName('ERem')
-    $script:eDate = $editWin.FindName('EDate')
-    $script:eTime = $editWin.FindName('ETime')
+    $eDesc = $editWin.FindName('EDesc')
+    $eLoc = $editWin.FindName('ELoc')
+    $eRem = $editWin.FindName('ERem')
+    $eDate = $editWin.FindName('EDate')
+    $eTime = $editWin.FindName('ETime')
     $eCalBtn = $editWin.FindName('ECalBtn')
     $eCalPopup = $editWin.FindName('ECalPopup')
     $eCalCtrl = $editWin.FindName('ECalCtrl')
@@ -1623,11 +1634,11 @@ function Open-EditDialog ($task) {
     $eTagPopup = $editWin.FindName('ETagPopup')
     $eTagCheckboxContainer = $editWin.FindName('ETagCheckboxContainer')
 
-    $script:eDesc.Text = $task.Description
-    $script:eLoc.Text = $task.Location
-    $script:eRem.Text = $task.Remarks
-    $script:eDate.Text = $task.EventDate
-    $script:eTime.Text = $task.Time
+    $eDesc.Text = $task.Description
+    $eLoc.Text = $task.Location
+    $eRem.Text = $task.Remarks
+    $eDate.Text = $task.EventDate
+    $eTime.Text = $task.Time
 
     $script:eSelectedTagIds = [System.Collections.Generic.List[string]]::new()
     if ($task.Tags) {
@@ -1658,26 +1669,22 @@ function Open-EditDialog ($task) {
                     $script:eSelectedTagIds.Remove($this.Tag) | Out-Null
                 }
                 $eSelectTagsBtn.Content = "🏷️ Select Tags (" + $script:eSelectedTagIds.Count + ")"
-            }.GetNewClosure())
+            })
             $eTagCheckboxContainer.Children.Add($cb) | Out-Null
         }
         $eTagPopup.IsOpen = $true
-    }.GetNewClosure())
+    })
 
     $script:editTimeStepMode = "1h"
     $eStepBtn.Content = "1h"
 
-    $eCalBtn.Add_Click({
-        $eCalCtrl.DisplayDate = Get-Date
-        $eCalPopup.IsOpen = $true
-    }.GetNewClosure())
-    
+    $eCalBtn.Add_Click({ $eCalPopup.IsOpen = $true })
     $eCalCtrl.Add_SelectedDatesChanged({
         if ($eCalCtrl.SelectedDate) {
-            $script:eDate.Text = $eCalCtrl.SelectedDate.ToString("dd-MM-yyyy")
+            $eDate.Text = $eCalCtrl.SelectedDate.ToString("dd-MM-yyyy")
             $eCalPopup.IsOpen = $false
         }
-    }.GetNewClosure())
+    })
 
     $eStepBtn.Add_Click({
         if ($script:editTimeStepMode -eq "1h") { 
@@ -1686,27 +1693,52 @@ function Open-EditDialog ($task) {
             $script:editTimeStepMode = "1h" 
         }
         $eStepBtn.Content = $script:editTimeStepMode
-    }.GetNewClosure())
+    })
 
-    $eMinusBtn.Add_Click({ Adjust-TimeBox $script:eTime $script:editTimeStepMode -1 }.GetNewClosure())
-    $ePlusBtn.Add_Click({ Adjust-TimeBox $script:eTime $script:editTimeStepMode 1 }.GetNewClosure())
+    $eMinusBtn.Add_Click({
+        $currentTime = [DateTime]::Now
+        [void][DateTime]::TryParseExact($eTime.Text, "HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
+        if ($script:editTimeStepMode -eq "1h") {
+            $currentTime = $currentTime.AddHours(-1)
+        } else {
+            $m = $currentTime.Minute
+            $rem = $m % 5
+            $sub = if ($rem -ne 0) { $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes(-$sub)
+        }
+        $eTime.Text = $currentTime.ToString("HH:mm")
+    })
 
-    $eCancelBtn.Add_Click({ $editWin.Close() }.GetNewClosure())
+    $ePlusBtn.Add_Click({
+        $currentTime = [DateTime]::Now
+        [void][DateTime]::TryParseExact($eTime.Text, "HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
+        if ($script:editTimeStepMode -eq "1h") {
+            $currentTime = $currentTime.AddHours(1)
+        } else {
+            $m = $currentTime.Minute
+            $rem = $m % 5
+            $add = if ($rem -ne 0) { 5 - $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes($add)
+        }
+        $eTime.Text = $currentTime.ToString("HH:mm")
+    })
+
+    $eCancelBtn.Add_Click({ $editWin.Close() })
 
     $eSaveBtn.Add_Click({
-        if ($script:eDesc.Text.Trim() -ne "") {
-            $task.Description = $script:eDesc.Text.Trim()
-            $task.Location    = $script:eLoc.Text.Trim()
-            $task.Remarks     = $script:eRem.Text.Trim()
-            $task.EventDate   = if ($script:eDate.Text) { $script:eDate.Text } else { (Get-Date -Format "dd-MM-yyyy") }
-            $task.Time        = if ($script:eTime.Text) { $script:eTime.Text } else { (Get-Date -Format "HH:mm") }
+        if ($eDesc.Text.Trim() -ne "") {
+            $task.Description = $eDesc.Text.Trim()
+            $task.Location    = $eLoc.Text.Trim()
+            $task.Remarks     = $eRem.Text.Trim()
+            $task.EventDate   = if ($eDate.Text) { $eDate.Text } else { (Get-Date -Format "dd-MM-yyyy") }
+            $task.Time        = if ($eTime.Text) { $eTime.Text } else { (Get-Date -Format "HH:mm") }
             $task.Tags        = ($script:eSelectedTagIds -join ";")
 
             Save-Data
             Render-Cards
         }
         $editWin.Close()
-    }.GetNewClosure())
+    })
 
     $editWin.ShowDialog() | Out-Null
 }
@@ -1852,7 +1884,8 @@ function Open-AlertConfigurator ($task) {
                     </Grid>
 
                     <!-- Alert 3 -->
-                    <TextBlock Text="Alert 3:" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,10">
+                    <TextBlock Text="Alert 3:" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,2"/>
+                    <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="60"/>
                             <ColumnDefinition Width="80"/>
@@ -1869,7 +1902,7 @@ function Open-AlertConfigurator ($task) {
 
                     <!-- Manual Absolute Alerts Section -->
                     <Border BorderBrush="#313244" BorderThickness="0,1,0,0" Margin="0,4,0,8"/>
-                    <TextBlock Text="Manual Absolute Alerts (Specific Date and Time):" Foreground="#A6E3A1" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
+                    <TextBlock Text="Manual Absolute Alerts (Specific Date &amp; Time):" Foreground="#A6E3A1" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
 
                     <!-- Manual Alert 1 (Alert 4) -->
                     <TextBlock Text="Manual Alert 1 (Date | Time):" Foreground="#A6ADC8" FontSize="10" Margin="0,0,0,2"/>
@@ -2013,6 +2046,44 @@ function Open-AlertConfigurator ($task) {
 
     $cfgWin.ShowDialog() | Out-Null
 }
+
+# Calendar Picker
+$calBtn.Add_Click({ $calPopup.IsOpen = $true })
+$calCtrl.Add_SelectedDatesChanged({
+    if ($calCtrl.SelectedDate) {
+        $dateInput.Text = $calCtrl.SelectedDate.ToString("dd-MM-yyyy")
+        $calPopup.IsOpen = $false
+    }
+})
+
+# Time Step Controls
+$timeStepModeBtn.Add_Click({
+    if ($global:timeStepMode -eq "1h") { $global:timeStepMode = "5m" } else { $global:timeStepMode = "1h" }
+    $timeStepModeBtn.Content = $global:timeStepMode
+})
+
+function Adjust-Time ($direction) {
+    $currentTime = [DateTime]::Now
+    [void][DateTime]::TryParseExact($timeInput.Text, "HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
+    
+    if ($global:timeStepMode -eq "1h") {
+        $currentTime = $currentTime.AddHours($direction)
+    } else {
+        $m = $currentTime.Minute
+        $rem = $m % 5
+        if ($direction -gt 0) {
+            $add = if ($rem -ne 0) { 5 - $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes($add)
+        } else {
+            $sub = if ($rem -ne 0) { $rem } else { 5 }
+            $currentTime = $currentTime.AddMinutes(-$sub)
+        }
+    }
+    $timeInput.Text = $currentTime.ToString("HH:mm")
+}
+
+$timeMinusBtn.Add_Click({ Adjust-Time -1 })
+$timePlusBtn.Add_Click({ Adjust-Time 1 })
 
 # Collapse / Expand Input Panel Action
 $collapseBtn.Add_Click({
