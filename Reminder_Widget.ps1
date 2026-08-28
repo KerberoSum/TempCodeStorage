@@ -2049,6 +2049,11 @@ function Open-AlertConfigurator ($task) {
 
 # Calendar Picker
 $calBtn.Add_Click({ $calPopup.IsOpen = $true })
+    # Reset popup calendar to current month each time it opens
+    $now = Get-Date
+    $calCtrl.DisplayDate = $now
+    $calPopup.IsOpen = $true
+})
 $calCtrl.Add_SelectedDatesChanged({
     if ($calCtrl.SelectedDate) {
         $dateInput.Text = $calCtrl.SelectedDate.ToString("dd-MM-yyyy")
