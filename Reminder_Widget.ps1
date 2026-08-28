@@ -9,6 +9,30 @@ $filePath = Join-Path $scriptDir "Widget_Data.csv"
 $tagPath  = Join-Path $scriptDir "Widget_Tags.csv"
 $startupShortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\DesktopWidget.lnk"
 
+# Universal Time Adjustment Helper
+function Adjust-TimeBox ($textBox, $stepMode, $direction) {
+    $text = $textBox.Text.Trim()
+    $totalMins = 0
+    if ($text -match '^(\d{1,2}):(\d{1,2})$') {
+        $h = [int]$matches[1]
+        $m = [int]$matches[2]
+        $totalMins = ($h * 60) + $m
+    } else {
+        $now = Get-Date
+        $totalMins = ($now.Hour * 60) + $now.Minute
+    }
+
+    $step = if ($stepMode -eq "5m") { 5 } else { 60 }
+    $totalMins = $totalMins + ($step * $direction)
+
+    while ($totalMins -lt 0) { $totalMins += 1440 }
+    $totalMins = $totalMins % 1440
+
+    $newH = [math]::Floor($totalMins / 60)
+    $newM = $totalMins % 60
+    $textBox.Text = "{0:D2}:{1:D2}" -f $newH, $newM
+}
+
 # Main Window XAML
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -100,7 +124,7 @@ $xaml = @'
                         </Popup>
                     </Grid>
 
-                    <!-- Date & Time Row -->
+                    <!-- Date and Time Row -->
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -418,7 +442,6 @@ function Get-FilteredTasks {
     return $active | Where-Object {
         $item = $_
         
-        # 1. Tag Filter
         if ($global:filterTagIds.Count -gt 0) {
             if (-not $item.Tags) { return $false }
             $itemTagIds = $item.Tags.Split(';')
@@ -429,21 +452,18 @@ function Get-FilteredTasks {
             if (-not $tagMatch) { return $false }
         }
 
-        # 2. Description Search
         if ($global:filterDesc -and $global:filterDesc.Trim() -ne "") {
             if (-not $item.Description -or ($item.Description.IndexOf($global:filterDesc.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
                 return $false
             }
         }
 
-        # 3. Location Search
         if ($global:filterLoc -and $global:filterLoc.Trim() -ne "") {
             if (-not $item.Location -or ($item.Location.IndexOf($global:filterLoc.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
                 return $false
             }
         }
 
-        # 4. Remarks Search
         if ($global:filterRem -and $global:filterRem.Trim() -ne "") {
             if (-not $item.Remarks -or ($item.Remarks.IndexOf($global:filterRem.Trim(), [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
                 return $false
@@ -1512,6 +1532,7 @@ function Open-DayOverview ($dateStr) {
 $viewToggleBtn.Add_Click({
     $global:isCalendarView = -not $global:isCalendarView
     if ($global:isCalendarView) {
+        $global:calDisplayDate = Get-Date
         $feedScrollViewer.Visibility = [System.Windows.Visibility]::Collapsed
         $calendarViewContainer.Visibility = [System.Windows.Visibility]::Visible
         $viewToggleBtn.Content = "📋 Feed View"
@@ -1690,33 +1711,8 @@ function Open-EditDialog ($task) {
         $eStepBtn.Content = $script:editTimeStepMode
     })
 
-    $eMinusBtn.Add_Click({
-        $currentTime = Get-Date
-        $timeText = $eTime.Text.Trim()
-        if ($timeText) {
-            [void][DateTime]::TryParseExact($timeText, @("HH:mm", "H:mm", "HH:m", "H:m"), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
-        }
-        if ($script:editTimeStepMode -eq "1h") {
-            $currentTime = $currentTime.AddHours(-1)
-        } else {
-            $currentTime = $currentTime.AddMinutes(-5)
-        }
-        $eTime.Text = $currentTime.ToString("HH:mm")
-    })
-
-    $ePlusBtn.Add_Click({
-        $currentTime = Get-Date
-        $timeText = $eTime.Text.Trim()
-        if ($timeText) {
-            [void][DateTime]::TryParseExact($timeText, @("HH:mm", "H:mm", "HH:m", "H:m"), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
-        }
-        if ($script:editTimeStepMode -eq "1h") {
-            $currentTime = $currentTime.AddHours(1)
-        } else {
-            $currentTime = $currentTime.AddMinutes(5)
-        }
-        $eTime.Text = $currentTime.ToString("HH:mm")
-    })
+    $eMinusBtn.Add_Click({ Adjust-TimeBox $eTime $script:editTimeStepMode -1 })
+    $ePlusBtn.Add_Click({ Adjust-TimeBox $eTime $script:editTimeStepMode 1 })
 
     $eCancelBtn.Add_Click({ $editWin.Close() })
 
@@ -2059,23 +2055,8 @@ $timeStepModeBtn.Add_Click({
     $timeStepModeBtn.Content = $global:timeStepMode
 })
 
-function Adjust-Time ($direction) {
-    $currentTime = Get-Date
-    $timeText = $timeInput.Text.Trim()
-    if ($timeText) {
-        [void][DateTime]::TryParseExact($timeText, @("HH:mm", "H:mm", "HH:m", "H:m"), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$currentTime)
-    }
-    
-    if ($global:timeStepMode -eq "1h") {
-        $currentTime = $currentTime.AddHours($direction)
-    } else {
-        $currentTime = $currentTime.AddMinutes(5 * $direction)
-    }
-    $timeInput.Text = $currentTime.ToString("HH:mm")
-}
-
-$timeMinusBtn.Add_Click({ Adjust-Time -1 })
-$timePlusBtn.Add_Click({ Adjust-Time 1 })
+$timeMinusBtn.Add_Click({ Adjust-TimeBox $timeInput $global:timeStepMode -1 })
+$timePlusBtn.Add_Click({ Adjust-TimeBox $timeInput $global:timeStepMode 1 })
 
 # Collapse / Expand Input Panel Action
 $collapseBtn.Add_Click({
