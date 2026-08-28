@@ -389,6 +389,53 @@ $global:calDisplayDate = Get-Date
 $global:draggedTask = $null
 $global:dragStartPoint = [System.Windows.Point]::new(0, 0)
 
+# Attempt to parse current TimeInput text (HH:mm)
+$now = Get-Date
+$timeText = $timeInput.Text -as [string]
+$parsed = $null
+$formats = @("HH:mm", "H:mm", "HHmm", "H:mm:ss")
+
+foreach ($f in $formats) {
+    if ([DateTime]::TryParseExact($timeText, $f, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        break
+    }
+}
+if (-not $parsed) {
+    # fallback to now
+    $parsed = $now
+} else {
+    # Use today's date with parsed time so AddMinutes/AddHours works predictably
+    $parsed = Get-Date -Hour $parsed.Hour -Minute $parsed.Minute -Second 0
+}
+
+# Determine step size from mode string (examples: "5m", "15m", "30m", "1h")
+$mode = $global:timeStepMode -as [string]
+if (-not $mode) { $mode = "1h" }
+
+$stepMinutes = 0
+if ($mode -match '^\s*(\d+)\s*[mM]\s*$') {
+    $stepMinutes = [int]$matches[1]
+} elseif ($mode -match '^\s*(\d+)\s*[hH]\s*$') {
+    $stepMinutes = [int]$matches[1] * 60
+} elseif ($mode -match '^\s*(\d+)\s*$') {
+    # numeric only: treat as minutes
+    $stepMinutes = [int]$matches[1]
+} else {
+    # if mode like "5m/1h", prefer first numeric+unit
+    if ($mode -match '(\d+)([mMhH])') {
+        $n = [int]$matches[1]; $u = $matches[2]
+        $stepMinutes = ($u -match '[hH]') ? ($n * 60) : $n
+    } else {
+        $stepMinutes = 60
+    }
+}
+
+if ($stepMinutes -eq 0) { $stepMinutes = 60 }
+
+# Compute new time and write back in HH:mm
+$newTime = $parsed.AddMinutes($Direction * $stepMinutes)
+$timeInput.Text = $newTime.ToString("HH:mm")
+
 function Get-Palette {
     if ($global:isDarkMode) {
         return @{
@@ -2082,8 +2129,8 @@ function Adjust-Time ($direction) {
     $timeInput.Text = $currentTime.ToString("HH:mm")
 }
 
-$timeMinusBtn.Add_Click({ Adjust-Time -1 })
-$timePlusBtn.Add_Click({ Adjust-Time 1 })
+$timeMinusBtn.Add_Click({ param($s,$e) Adjust-TimeInput -Direction -1 })
+$timePlusBtn.Add_Click({ param($s,$e) Adjust-TimeInput -Direction 1 })
 
 # Collapse / Expand Input Panel Action
 $collapseBtn.Add_Click({
