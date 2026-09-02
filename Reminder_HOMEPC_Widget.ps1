@@ -229,6 +229,16 @@ $xaml = @'
                     </Button.Template>
                 </Button>
 
+                <Button Name="ManageEntriesBtn" Content="🗂️ Manage Entries" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,4,4" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <Button Name="ManageTagsBtn" Content="🏷️ Manage Tags" BorderThickness="0" FontSize="11" FontWeight="Bold" Padding="8,5" Margin="0,0,0,4" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -360,6 +370,7 @@ $batchGenBtn     = $window.FindName('BatchGenBtn')
 $sortBtn         = $window.FindName('SortBtn')
 $filterBtn       = $window.FindName('FilterBtn')
 $viewToggleBtn   = $window.FindName('ViewToggleBtn')
+$manageEntriesBtn = $window.FindName('ManageEntriesBtn')
 $manageTagsBtn   = $window.FindName('ManageTagsBtn')
 $feedScrollViewer = $window.FindName('FeedScrollViewer')
 $calendarViewContainer = $window.FindName('CalendarViewContainer')
@@ -648,6 +659,8 @@ function Apply-Theme {
     $sortBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
     $viewToggleBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
     $viewToggleBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
+    $manageEntriesBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
+    $manageEntriesBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
     $manageTagsBtn.Background = $bc.ConvertFromString($p.BtnSecBg)
     $manageTagsBtn.Foreground = $bc.ConvertFromString($p.BtnSecText)
     $addBtn.Background = $bc.ConvertFromString($p.Accent)
@@ -710,6 +723,7 @@ function Load-Data {
                         if (-not ($item.PSObject.Properties["Alert${i}_Done"])) { Add-Member -InputObject $item -NotePropertyName "Alert${i}_Done" -NotePropertyValue "FALSE" }
                     }
                     if (-not ($item.PSObject.Properties['Tags'])) { Add-Member -InputObject $item -NotePropertyName "Tags" -NotePropertyValue "" }
+                    if (-not ($item.PSObject.Properties['Id']) -or -not $item.Id -or $item.Id.Trim() -eq "") { Add-Member -InputObject $item -NotePropertyName "Id" -NotePropertyValue ([Guid]::NewGuid().ToString()) -Force }
                     $global:tasks.Add($item)
                 }
             }
@@ -1159,6 +1173,223 @@ function Open-TagManager {
 }
 
 $manageTagsBtn.Add_Click({ Open-TagManager })
+
+function Open-EntryManager {
+    $mgrXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Entry Manager" Height="620" Width="1050" WindowStyle="None"
+        AllowsTransparency="True" Background="Transparent" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Border Background="#1E1E2E" CornerRadius="16" BorderBrush="#89B4FA" BorderThickness="1.5" Margin="10">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="🗂️ Entry Manager (Ctrl+Click / Shift+Click to multi-select)" Foreground="#CDD6F4" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+
+            <ListView Grid.Row="1" Name="EMList" SelectionMode="Extended" Background="#181825" Foreground="#CDD6F4" BorderThickness="0">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Date" Width="95" DisplayMemberBinding="{Binding EventDate}" />
+                        <GridViewColumn Header="Time" Width="70" DisplayMemberBinding="{Binding Time}" />
+                        <GridViewColumn Header="Description" Width="260" DisplayMemberBinding="{Binding Description}" />
+                        <GridViewColumn Header="Location" Width="160" DisplayMemberBinding="{Binding Location}" />
+                        <GridViewColumn Header="Remarks" Width="170" DisplayMemberBinding="{Binding Remarks}" />
+                        <GridViewColumn Header="Tags" Width="240" DisplayMemberBinding="{Binding TagsDisplay}" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <Grid Grid.Row="2" Margin="0,10,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Name="EMTotalText" Grid.Column="0" Foreground="#A6ADC8" FontSize="11" />
+                <TextBlock Name="EMSelectedText" Grid.Column="1" Foreground="#A6E3A1" FontSize="11" FontWeight="Bold" />
+            </Grid>
+
+            <Grid Grid.Row="3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button Name="EMDeleteBtn" Grid.Column="0" Content="🗑 Delete Selected" Foreground="#11111B" Background="#F38BA8" BorderThickness="0" FontWeight="Bold" FontSize="12" Padding="0,7" Margin="0,0,6,0" Cursor="Hand"/>
+                <Button Name="EMDeleteFutureBtn" Grid.Column="1" Content="⏭️ Delete Selected Future Only" Foreground="#11111B" Background="#F9E2AF" BorderThickness="0" FontWeight="Bold" FontSize="12" Padding="0,7" Margin="0,0,6,0" Cursor="Hand"/>
+                <Button Name="EMCloseBtn" Grid.Column="2" Content="Close" Foreground="#CDD6F4" Background="#313244" BorderThickness="0" FontWeight="Bold" FontSize="12" Padding="0,7" Cursor="Hand"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+'@
+
+    $mgrWin = [System.Windows.Markup.XamlReader]::Parse($mgrXaml)
+    $emList = $mgrWin.FindName('EMList')
+    $emDeleteBtn = $mgrWin.FindName('EMDeleteBtn')
+    $emDeleteFutureBtn = $mgrWin.FindName('EMDeleteFutureBtn')
+    $emCloseBtn = $mgrWin.FindName('EMCloseBtn')
+    $emTotalText = $mgrWin.FindName('EMTotalText')
+    $emSelectedText = $mgrWin.FindName('EMSelectedText')
+
+    $toTagNames = {
+        param([string]$tagIds)
+        if (-not $tagIds) { return "" }
+        $names = [System.Collections.Generic.List[string]]::new()
+        foreach ($tid in $tagIds.Split(';')) {
+            if ($tid) {
+                $match = $global:tags | Where-Object { $_.Id -eq $tid } | Select-Object -First 1
+                if ($match) { $names.Add($match.Name) }
+            }
+        }
+        return ($names -join ", ")
+    }
+
+    $toSignature = {
+        param($item)
+        $desc = if ($item.Description) { $item.Description.Trim().ToLowerInvariant() } else { "" }
+        $loc = if ($item.Location) { $item.Location.Trim().ToLowerInvariant() } else { "" }
+        $time = if ($item.Time) { $item.Time.Trim() } else { "" }
+        $remarks = if ($item.Remarks) { $item.Remarks.Trim().ToLowerInvariant() } else { "" }
+        $tags = if ($item.Tags) { $item.Tags.Trim().ToLowerInvariant() } else { "" }
+        return "$desc|$loc|$time|$remarks|$tags"
+    }
+
+    $toDateTime = {
+        param($item)
+        $dt = [DateTime]::MinValue
+        $ok = [DateTime]::TryParseExact("$($item.EventDate) $($item.Time)", "dd-MM-yyyy HH:mm", $null, [System.Globalization.DateTimeStyles]::None, [ref]$dt)
+        if ($ok) { return $dt }
+        return [DateTime]::MinValue
+    }
+
+    $updateSelectedCount = {
+        $emSelectedText.Text = "Selected: $(@($emList.SelectedItems).Count)"
+    }
+
+    $refreshManagerList = {
+        $emList.Items.Clear()
+        $active = $global:tasks | Where-Object { $_.Deleted -ne "TRUE" -and $_.Deleted -ne "True" }
+        foreach ($item in $active) {
+            if (-not $item.Id -or $item.Id.Trim() -eq "") { $item.Id = [Guid]::NewGuid().ToString() }
+            $row = [PSCustomObject]@{
+                Id          = $item.Id
+                EventDate   = $item.EventDate
+                Time        = $item.Time
+                Description = $item.Description
+                Location    = $item.Location
+                Remarks     = $item.Remarks
+                TagsDisplay = (& $toTagNames $item.Tags)
+                SortDate    = (& $toDateTime $item)
+            }
+            $emList.Items.Add($row) | Out-Null
+        }
+        $view = [System.Windows.Data.CollectionViewSource]::GetDefaultView($emList.Items)
+        $view.SortDescriptions.Clear()
+        $view.SortDescriptions.Add((New-Object System.ComponentModel.SortDescription("SortDate", [System.ComponentModel.ListSortDirection]::Ascending)))
+        $view.Refresh()
+        $emTotalText.Text = "Total entries: $(@($active).Count)"
+        & $updateSelectedCount
+    }
+
+    $emList.Add_SelectionChanged({ & $updateSelectedCount })
+
+    $emDeleteBtn.Add_Click({
+        $selectedRows = @($emList.SelectedItems)
+        if ($selectedRows.Count -eq 0) {
+            [System.Windows.MessageBox]::Show("Select one or more entries first.", "No Selection")
+            return
+        }
+
+        $selectedIds = @{}
+        foreach ($row in $selectedRows) {
+            if ($row.Id) { $selectedIds[$row.Id] = $true }
+        }
+
+        $deletedCount = 0
+        foreach ($item in $global:tasks) {
+            if ($item.Id -and $selectedIds.ContainsKey($item.Id) -and $item.Deleted -ne "TRUE" -and $item.Deleted -ne "True") {
+                $item.Deleted = "TRUE"
+                $deletedCount++
+            }
+        }
+
+        if ($deletedCount -gt 0) {
+            Save-Data
+            Render-Cards
+            & $refreshManagerList
+        }
+    })
+
+    $emDeleteFutureBtn.Add_Click({
+        $selectedRows = @($emList.SelectedItems)
+        if ($selectedRows.Count -eq 0) {
+            [System.Windows.MessageBox]::Show("Select one or more routine entries first.", "No Selection")
+            return
+        }
+
+        $selectedIds = @{}
+        foreach ($row in $selectedRows) {
+            if ($row.Id) { $selectedIds[$row.Id] = $true }
+        }
+
+        $seedRows = [System.Collections.Generic.List[PSObject]]::new()
+        foreach ($item in $global:tasks) {
+            if ($item.Id -and $selectedIds.ContainsKey($item.Id) -and $item.Deleted -ne "TRUE" -and $item.Deleted -ne "True" -and $item.Remarks -eq "Routine Entry") {
+                $seedDt = & $toDateTime $item
+                if ($seedDt -ne [DateTime]::MinValue) {
+                    $seedRows.Add([PSCustomObject]@{
+                        Signature = (& $toSignature $item)
+                        StartDate = $seedDt
+                    })
+                }
+            }
+        }
+
+        if ($seedRows.Count -eq 0) {
+            [System.Windows.MessageBox]::Show("No eligible 'Routine Entry' rows selected for future-only deletion.", "Nothing To Delete")
+            return
+        }
+
+        $deletedCount = 0
+        foreach ($item in $global:tasks) {
+            if ($item.Deleted -eq "TRUE" -or $item.Deleted -eq "True" -or $item.Remarks -ne "Routine Entry") { continue }
+            $itemDt = & $toDateTime $item
+            if ($itemDt -eq [DateTime]::MinValue) { continue }
+            $itemSig = & $toSignature $item
+
+            $shouldDelete = $false
+            foreach ($seed in $seedRows) {
+                if ($seed.Signature -eq $itemSig -and $itemDt -ge $seed.StartDate) {
+                    $shouldDelete = $true
+                    break
+                }
+            }
+
+            if ($shouldDelete) {
+                $item.Deleted = "TRUE"
+                $deletedCount++
+            }
+        }
+
+        if ($deletedCount -gt 0) {
+            Save-Data
+            Render-Cards
+            & $refreshManagerList
+        }
+    })
+
+    $emCloseBtn.Add_Click({ $mgrWin.Close() })
+
+    & $refreshManagerList
+    $mgrWin.ShowDialog() | Out-Null
+}
+
+$manageEntriesBtn.Add_Click({ Open-EntryManager })
 
 # Multi-Date & Routine Generator Dialog
 function Open-RoutineGenerator {
